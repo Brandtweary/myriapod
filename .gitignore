@@ -1,0 +1,35 @@
+# Feature taskpads — planning artifacts, kept local, never tracked (blanket pattern)
+feature_taskpad_*.md
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Secrets / env — never commit keys (OpenRouter, etc.)
+.env
+.env.*
+!.env.example
+*.key
+
+# Local KG / runtime state
+*.local
+local_kg/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
