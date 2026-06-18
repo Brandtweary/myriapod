@@ -49,10 +49,101 @@ export function summarizeMessages(messages: Array<{ role?: string }>): string {
 	return `${messages.length} messages`;
 }
 
+// High-res relative timestamp, rounded ms.
+const ms = () => Math.round(performance.now());
+
+// WIRE-LEVEL STREAM TAP — the no-assumptions diagnostic for the ~13s
+// end-of-stream stall. We wrap global fetch and, for OpenRouter chat-completion
+// calls only, tap the response body's ReadableStream so every raw SSE chunk is
+// timestamped AS IT ARRIVES OFF THE WIRE, flagged for the markers that bound the
+// stall: `finish_reason` (visible answer done), `"usage"` (the trailing
+// usage-only chunk that include_usage:true requests), and `[DONE]` (stream
+// close). If the big gap sits between the finish_reason chunk and the usage/DONE
+// chunk, the provider is holding the connection open after the answer completes
+// (OpenRouter/DeepSeek side, NOT our code or pi-ai). If instead the raw chunks
+// all land fast and the lag is after "body DONE", it's pi-ai/agent-core. This
+// reads timing straight off the network, below pi-ai entirely.
+//
+// Must run before the first chat request. The OpenAI SDK reads global fetch at
+// call time (not import time), and createAgent()/the first send happen well
+// after initApp() calls installInstrumentation(), so patching here is in time.
+export function installStreamTap(): void {
+	const origFetch = globalThis.fetch.bind(globalThis);
+	let reqSeq = 0;
+	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url =
+			typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+		const isLlm = url?.includes("openrouter.ai") && url?.includes("chat/completions");
+		if (!isLlm) return origFetch(input, init);
+
+		const id = ++reqSeq;
+		const t0 = performance.now();
+		const rel = () => Math.round(performance.now() - t0);
+		dbg(`[stream #${id}] fetch START @ ${ms()}ms — ${url}`);
+
+		const resp = await origFetch(input, init);
+		dbg(`[stream #${id}] response headers @ +${rel()}ms status=${resp.status}`);
+		if (!resp.body) return resp;
+
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let chunkCount = 0;
+		let sawFinishAt = -1;
+		const tapped = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				try {
+					const { done, value } = await reader.read();
+					if (done) {
+						const tailNote =
+							sawFinishAt >= 0 ? ` (gap finish→close=${rel() - sawFinishAt}ms)` : "";
+						dbg(`[stream #${id}] body DONE @ +${rel()}ms, ${chunkCount} chunks${tailNote}`);
+						controller.close();
+						return;
+					}
+					chunkCount++;
+					const text = decoder.decode(value, { stream: true });
+					const markers: string[] = [];
+					if (text.includes("finish_reason") && !text.includes('"finish_reason":null')) {
+						markers.push("finish_reason");
+						if (sawFinishAt < 0) sawFinishAt = rel();
+					}
+					if (text.includes('"usage"')) markers.push("usage");
+					if (text.includes("[DONE]")) markers.push("DONE");
+					// Only log marker chunks + every 25th content chunk — avoid per-token
+					// fetch spam while still bracketing the stall precisely.
+					if (markers.length > 0 || chunkCount % 25 === 0) {
+						dbg(
+							`[stream #${id}] chunk ${chunkCount} @ +${rel()}ms len=${value.byteLength}${
+								markers.length ? ` <${markers.join(",")}>` : ""
+							}`,
+						);
+					}
+					controller.enqueue(value);
+				} catch (err) {
+					dbgError(`[stream #${id}] reader threw @ +${rel()}ms:`, err);
+					controller.error(err);
+				}
+			},
+			cancel(reason) {
+				dbgWarn(`[stream #${id}] cancelled @ +${rel()}ms:`, reason);
+				return reader.cancel(reason);
+			},
+		});
+
+		return new Response(tapped, {
+			headers: resp.headers,
+			status: resp.status,
+			statusText: resp.statusText,
+		});
+	};
+	dbg("[stream] fetch tap installed");
+}
+
 // Global handlers so nothing fails silently, plus a per-load INIT marker (a
 // fresh INIT after an action you didn't trigger means the page reloaded).
 export function installInstrumentation(): void {
-	dbg(`==== INIT @ ${Math.round(performance.now())}ms, url=${window.location.href}`);
+	dbg(`==== INIT @ ${ms()}ms, url=${window.location.href}`);
+	installStreamTap();
 
 	window.addEventListener("error", (e) => {
 		dbgError("window error:", e.message, `${e.filename}:${e.lineno}:${e.colno}`);

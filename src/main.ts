@@ -87,6 +87,12 @@ let headerHost: HTMLDivElement;
 let aboutHost: HTMLDivElement;
 let agentUnsubscribe: (() => void) | undefined;
 
+// Stall-timing scratch (see the agent listener) — last message_update timestamp
+// and per-message update count, used to measure the gap from the last streamed
+// token to the terminal event.
+let lastUpdateAt = 0;
+let updateCount = 0;
+
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
 // `state.messages` in place (push). So committed messages never repaint — the
@@ -206,13 +212,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 
 	agent = new Agent({
 		initialState: initialState || {
-			systemPrompt: `You are a helpful AI assistant with access to various tools.
-
-Available tools:
-- JavaScript REPL: Execute JavaScript code in a sandboxed browser environment (can do calculations, get time, process data, create visualizations, etc.)
-- Artifacts: Create interactive HTML, SVG, Markdown, and text artifacts
-
-Feel free to use these tools when needed to provide accurate and helpful responses.`,
+			systemPrompt: `You are a helpful AI assistant with access to a JavaScript REPL: execute JavaScript code in a sandboxed browser environment (calculations, data processing, etc.). Use it when it helps you give an accurate, correct answer.`,
 			model: CYMBIONT_MODEL,
 			thinkingLevel: CYMBIONT_THINKING_LEVEL,
 			messages: [],
@@ -240,9 +240,27 @@ Feel free to use these tools when needed to provide accurate and helpful respons
 			const isTerminal = type === "message_end" || type === "agent_end";
 			const messages = agent.state.messages;
 
+			// STALL TIMING — correlate the agent lifecycle against the wire tap.
+			// We DON'T log every message_update (per-token fetch would itself stall
+			// the run), but we track the last-update timestamp + count locally and
+			// report the gap on terminal events. A large "last update → end" gap
+			// here, combined with the [stream] wire log, localizes the ~13s stall:
+			// if the wire shows the same gap it's the provider; if the wire closed
+			// fast but this gap is large it's pi-ai/agent-core post-processing.
+			const tNow = Math.round(performance.now());
+			if (type === "message_start") {
+				lastUpdateAt = tNow;
+				updateCount = 0;
+			} else if (type === "message_update") {
+				lastUpdateAt = tNow;
+				updateCount++;
+			}
+
 			// Light logging — skip the per-token message_update spam.
 			if (type !== "message_update") {
-				dbg(`event ${type}: ${summarizeMessages(messages)}`);
+				const gapNote =
+					lastUpdateAt > 0 ? ` [t=${tNow}ms, ${updateCount} updates, +${tNow - lastUpdateAt}ms since last update]` : "";
+				dbg(`event ${type}: ${summarizeMessages(messages)}${gapNote}`);
 			}
 
 			let headerChanged = false;
