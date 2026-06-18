@@ -1,0 +1,111 @@
+/* ============================================================================
+   Cymbiont theme — Golgari (black / white text / neon-green accents)
+   ============================================================================
+   Overrides pi-web-ui's shadcn/Tailwind CSS-variable tokens. Loaded after the
+   prebuilt stylesheet so these win. We override BOTH :root and .dark with the
+   same palette so the look holds regardless of the theme toggle — the site is
+   dark-by-default (html.dark) and there is no light variant by design.
+
+   Neon green is intentional, not dulled to forest green (Brandt's call). Text is
+   white, NOT green — green is for accents, framing, and focus only. */
+
+:root,
+.dark {
+	/* Canvas */
+	--background: oklch(0% 0 0); /* pure black */
+	--foreground: oklch(100% 0 0); /* white text */
+
+	/* Lifted surfaces — just enough to read against pure black */
+	--card: oklch(16% 0 0);
+	--card-foreground: oklch(100% 0 0);
+	--popover: oklch(16% 0 0);
+	--popover-foreground: oklch(100% 0 0);
+
+	/* Neon green as the primary accent */
+	--primary: oklch(90% 0.29 142);
+	--primary-foreground: oklch(0% 0 0); /* black text on neon-green fills */
+
+	--secondary: oklch(20% 0 0);
+	--secondary-foreground: oklch(100% 0 0);
+
+	--muted: oklch(20% 0 0);
+	--muted-foreground: oklch(72% 0 0); /* dim gray for timestamps/meta */
+
+	/* Accent surfaces hint green */
+	--accent: oklch(24% 0.04 145);
+	--accent-foreground: oklch(90% 0.29 142);
+
+	--destructive: oklch(63% 0.23 25); /* keep red for errors/danger */
+	--destructive-foreground: oklch(100% 0 0);
+
+	/* Green-tinted framing + neon focus ring */
+	--border: oklch(44% 0.09 145);
+	--input: oklch(44% 0.09 145);
+	--ring: oklch(90% 0.29 142);
+
+	/* Sidebar surfaces mirror the canvas */
+	--sidebar: oklch(8% 0 0);
+	--sidebar-foreground: oklch(100% 0 0);
+	--sidebar-primary: oklch(90% 0.29 142);
+	--sidebar-primary-foreground: oklch(0% 0 0);
+	--sidebar-accent: oklch(24% 0.04 145);
+	--sidebar-accent-foreground: oklch(90% 0.29 142);
+	--sidebar-border: oklch(44% 0.09 145);
+	--sidebar-ring: oklch(90% 0.29 142);
+}
+
+/* Settings dialog: the stock 1px borders nearly vanish on pure black, and the
+   8px overlay scrollbar bisects the Save buttons. Thicken the panel/divider
+   borders and reserve a gutter so the scrollbar clears the buttons. Scoped to
+   the settings dialog so chat input boxes keep their default 1px. */
+settings-dialog .overflow-y-auto {
+	padding-right: 0.75rem;
+	scrollbar-gutter: stable;
+}
+
+/* Border-width tiers — NOT uniform. Different surfaces, different widths:
+   - Outer window panels (mini-lit dialogs use .rounded-lg.border): 3px.
+   - Input panel (the message-editor box uses .rounded-xl.border): 3px.
+   - Menu dock: 2px.
+   - Inner elements (text inputs, list rows) keep the default 1px (thin).
+   - User message bubbles get their own thin border (.user-message-container). */
+.rounded-lg.border {
+	border-width: 3px;
+}
+message-editor .rounded-xl.border {
+	border-width: 2px;
+}
+.cw-header {
+	border-bottom-width: 2px;
+}
+
+/* Hide pi-web-ui's per-assistant-message usage line (Messages.js renders one
+   under every message that has usage). We only want the single stats row at the
+   bottom of the input area. Scoped to the scrolling message list so it doesn't
+   touch the bottom row (which lives in .shrink-0, not .overflow-y-auto). */
+agent-interface .overflow-y-auto .px-4.mt-2.text-xs {
+	display: none;
+}
+
+/* Lift the input area off the very bottom (so its border doesn't meld with the
+   window border) WITHOUT injecting padding inside the input box. Target the
+   input container directly — .px-2 distinguishes it from the message list's
+   .max-w-3xl (which uses .p-4). Add a little gap above the stats row. */
+agent-interface .shrink-0 > .max-w-3xl.px-2 {
+	padding-bottom: 0.5rem;
+}
+agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
+	margin-top: 0.25rem;
+}
+
+/* The user-message bubble ships a hardcoded orange gradient that bypasses the
+   theme tokens — restate it in neon green. */
+.user-message-container {
+	background: linear-gradient(
+		135deg,
+		oklch(90% 0.29 142 / 0.1),
+		oklch(90% 0.29 142 / 0.16),
+		oklch(80% 0.2 150 / 0.1)
+	);
+	border: 1px solid oklch(90% 0.29 142 / 0.35);
+}

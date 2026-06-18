@@ -1,0 +1,5 @@
+/* Base styles: the prebuilt Tailwind v4 stylesheet shipped by pi-web-ui
+   (theme tokens, component classes, utilities). Cymbiont theme overrides
+   are layered on top in theme.css. */
+@import "@earendil-works/pi-web-ui/app.css";
+@import "./theme.css";
