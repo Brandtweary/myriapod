@@ -1,9 +1,9 @@
 {
   "_meta": {
     "version": 1,
-    "node_count": 155,
-    "edge_count": 408,
-    "last_modified": "2026-06-18T14:37:33.841148"
+    "node_count": 156,
+    "edge_count": 420,
+    "last_modified": "2026-06-19T14:06:37.596647"
   },
   "thoughts": {
     "6e68cf46-c089-47b4-8bc7-e53debab6233": {
@@ -41,7 +41,8 @@
         "777425ea-3efa-401f-ab40-2ce42691e990",
         "efa590eb-8166-48e9-80d4-33c475067835",
         "e88e0136-63d5-4122-abf2-13a37d2bf542",
-        "f50422d7-3fee-41d1-a9b2-0b77a1246191"
+        "f50422d7-3fee-41d1-a9b2-0b77a1246191",
+        "eb02503d-85e8-4d69-a36f-7fa207633bc4"
       ],
       "link_data": null,
       "hit_count": 7,
@@ -108,7 +109,8 @@
       "links_to": [
         "896ff411-e3c5-4b66-bb63-24695c262e15",
         "81b8d666-e996-42e8-94b3-e80cc894eff6",
-        "e0d5e1a9-6f97-4021-8680-0a13a7085686"
+        "e0d5e1a9-6f97-4021-8680-0a13a7085686",
+        "b4058343-2796-48c1-b97d-63bdb7d0a3fc"
       ],
       "links_from": [
         "467adf64-efab-4920-9dc6-e746c6ddcebb",
@@ -769,11 +771,13 @@
       "entity_type": "concept",
       "links_to": [
         "dac374bf-184c-48b2-9e79-8c6bd00ed1a3",
-        "4c8503fa-2026-448d-ae96-a46ff3d3cbae"
+        "4c8503fa-2026-448d-ae96-a46ff3d3cbae",
+        "a9774b84-4fc9-473a-9e8a-3b4a1722ba7b"
       ],
       "links_from": [
         "0673c70a-72da-4002-85b0-02562353f013",
-        "79638d59-8dca-46ad-b974-255cec269099"
+        "79638d59-8dca-46ad-b974-255cec269099",
+        "67f333d3-9b7e-486e-818c-1cd8f7461e91"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -1861,7 +1865,8 @@
         "bfbc8e6e-b31e-4fed-9008-b7dcee6a18d5",
         "3a669089-afa5-4094-bbb6-6a31d33a5aa2",
         "11761e1d-1a3a-4201-aa6f-10288bb38175",
-        "60118984-c8ca-4e34-93f4-f37a834001f0"
+        "60118984-c8ca-4e34-93f4-f37a834001f0",
+        "d01cdd64-4ca6-4ce3-8ac5-042e678575ce"
       ],
       "link_data": null,
       "hit_count": 2,
@@ -4518,7 +4523,8 @@
         "ded3c521-3488-4dbb-badb-94e12e53bf6e",
         "2f98668d-68c5-4417-a2cb-7139fb5908e0",
         "2d03df57-2c97-475e-bbd6-b5ee0be370f9",
-        "8c223dab-ce07-4f79-84de-f45358f25dac"
+        "8c223dab-ce07-4f79-84de-f45358f25dac",
+        "45b334db-2935-40a0-97c5-b371c503d350"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -4682,7 +4688,7 @@
       "label": "colonization-verdicts",
       "weight": 1.0,
       "last_fired": "2026-06-18T14:19:32.468039",
-      "description": "Resolved-verdict registry that suppresses re-flagging of colonized nodes already reviewed and adjudicated by the user.",
+      "description": "Resolved-verdict registry that suppresses re-flagging of colonized nodes already reviewed and adjudicated by a human reviewer.",
       "entity_type": "tool",
       "links_to": [
         "ded3c521-3488-4dbb-badb-94e12e53bf6e"
@@ -4708,7 +4714,8 @@
       ],
       "links_from": [
         "46183d37-0627-43d6-8e3a-93b10fe312df",
-        "fccd3fd1-b381-4fb6-a675-3ca195205d55"
+        "fccd3fd1-b381-4fb6-a675-3ca195205d55",
+        "3b1cf4ba-c509-476a-95cf-d016c487e50c"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -5167,7 +5174,8 @@
       ],
       "links_from": [
         "ad108799-5eea-4f58-9b56-034eaabf6fb9",
-        "422aa144-c06d-42a2-a564-d67e839393bb"
+        "422aa144-c06d-42a2-a564-d67e839393bb",
+        "ded8c74a-b00e-4c66-940a-ba3d7f4eaa0b"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -5382,12 +5390,14 @@
         "824d9876-4956-4797-997b-e4e914b3a991",
         "3c7724ff-53f3-40d0-8dce-5296fbc05c4c",
         "4a4ea34f-c1de-443a-842d-bde930ae4049",
-        "175d29fe-d675-4827-ba63-cd9751969636"
+        "175d29fe-d675-4827-ba63-cd9751969636",
+        "63989748-8c21-45a7-92cc-c3631d053f66"
       ],
       "links_from": [
         "329cb616-7c68-4506-9685-a4a83296e36c",
         "13dcda59-e78d-46bd-bafa-7efe959217c4",
-        "392837c4-fdca-4c2a-8a6c-ffb706757223"
+        "392837c4-fdca-4c2a-8a6c-ffb706757223",
+        "e3d9dbf9-5d5a-4d67-ba86-52937f700af1"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -6251,13 +6261,15 @@
         "a30a5e1b-5fc0-42b3-81ef-8b2a291fa3cc",
         "e1c7aacf-4e6f-48fa-a88b-4cb7008fa689",
         "f440559d-47b3-493b-9c0c-26e007e8ef65",
-        "63e2ef9f-c959-4826-9d8b-f7247a93368e"
+        "63e2ef9f-c959-4826-9d8b-f7247a93368e",
+        "8db47696-d763-4d7e-b1dd-0d003304f097"
       ],
       "links_from": [
         "b742821f-cfd7-4686-8b26-c99079e6b0e3",
         "1aaa1e4d-6b4b-4101-889a-bbcbaf41dfcc",
         "7df03a0c-9892-4bbf-a6df-35c4129cdc7d",
-        "ad83af4c-37df-499b-ab62-7134ac09a71b"
+        "ad83af4c-37df-499b-ab62-7134ac09a71b",
+        "ba76407d-8370-4f6c-af9c-f29ffd7c8cab"
       ],
       "link_data": null,
       "hit_count": 0,
@@ -11164,6 +11176,263 @@
       "hit_count": 0,
       "created_at": "2026-06-18T14:34:14.557316",
       "updated_at": "2026-06-18T14:34:14.557316",
+      "metadata": null
+    },
+    "a816f2fd-141b-4def-aebf-db039f36a4ca": {
+      "id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+      "label": "knowledge-graph",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710813",
+      "description": "Cymbiont's core memory substrate: a property graph where entities and their relationships are first-class Thought nodes and edges. Retrieval combines Personalized PageRank diffusion with label term-matching, injected as context every turn. It is autonomic \u2014 background hooks and agents extract, store, and recall knowledge; neither the coding agent nor any operator manually writes or queries a memory. The graph is timeless: no decay, no pruning, every edge weight 1.0.",
+      "entity_type": "concept",
+      "links_to": [
+        "eb02503d-85e8-4d69-a36f-7fa207633bc4",
+        "45b334db-2935-40a0-97c5-b371c503d350",
+        "d01cdd64-4ca6-4ce3-8ac5-042e678575ce",
+        "ba76407d-8370-4f6c-af9c-f29ffd7c8cab",
+        "e3d9dbf9-5d5a-4d67-ba86-52937f700af1",
+        "ded8c74a-b00e-4c66-940a-ba3d7f4eaa0b",
+        "67f333d3-9b7e-486e-818c-1cd8f7461e91",
+        "3b1cf4ba-c509-476a-95cf-d016c487e50c"
+      ],
+      "links_from": [
+        "b4058343-2796-48c1-b97d-63bdb7d0a3fc",
+        "8db47696-d763-4d7e-b1dd-0d003304f097",
+        "63989748-8c21-45a7-92cc-c3631d053f66",
+        "a9774b84-4fc9-473a-9e8a-3b4a1722ba7b"
+      ],
+      "link_data": null,
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710813",
+      "updated_at": "2026-06-19T13:04:06.710813",
+      "metadata": null
+    },
+    "eb02503d-85e8-4d69-a36f-7fa207633bc4": {
+      "id": "eb02503d-85e8-4d69-a36f-7fa207633bc4",
+      "label": "knowledge-graph::part-of::cymbiont",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710882",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "part-of",
+        "to_id": "6e68cf46-c089-47b4-8bc7-e53debab6233"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710882",
+      "updated_at": "2026-06-19T13:04:06.710882",
+      "metadata": null
+    },
+    "b4058343-2796-48c1-b97d-63bdb7d0a3fc": {
+      "id": "b4058343-2796-48c1-b97d-63bdb7d0a3fc",
+      "label": "knowledge-graph-memory::is-a::knowledge-graph",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710903",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "6cf09b15-de29-4d08-8c25-b3dd1fe030a6",
+        "link_type": "is-a",
+        "to_id": "a816f2fd-141b-4def-aebf-db039f36a4ca"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710903",
+      "updated_at": "2026-06-19T13:04:06.710903",
+      "metadata": null
+    },
+    "45b334db-2935-40a0-97c5-b371c503d350": {
+      "id": "45b334db-2935-40a0-97c5-b371c503d350",
+      "label": "knowledge-graph::has::kg-engine",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710917",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "has",
+        "to_id": "f7bfd4ad-e214-4248-8417-879bdcaf1911"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710917",
+      "updated_at": "2026-06-19T13:04:06.710917",
+      "metadata": null
+    },
+    "d01cdd64-4ca6-4ce3-8ac5-042e678575ce": {
+      "id": "d01cdd64-4ca6-4ce3-8ac5-042e678575ce",
+      "label": "knowledge-graph::has::kg-server",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710928",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "has",
+        "to_id": "86fe04b9-bb46-47c2-a307-cf6153f200de"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710928",
+      "updated_at": "2026-06-19T13:04:06.710928",
+      "metadata": null
+    },
+    "ba76407d-8370-4f6c-af9c-f29ffd7c8cab": {
+      "id": "ba76407d-8370-4f6c-af9c-f29ffd7c8cab",
+      "label": "knowledge-graph::relates-to::ppr-retrieval",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710938",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "relates-to",
+        "to_id": "8d9a3373-cbc0-4349-b2f4-c974f7ed4049"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710938",
+      "updated_at": "2026-06-19T13:04:06.710938",
+      "metadata": null
+    },
+    "8db47696-d763-4d7e-b1dd-0d003304f097": {
+      "id": "8db47696-d763-4d7e-b1dd-0d003304f097",
+      "label": "ppr-retrieval::relates-to::knowledge-graph",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710950",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "8d9a3373-cbc0-4349-b2f4-c974f7ed4049",
+        "link_type": "relates-to",
+        "to_id": "a816f2fd-141b-4def-aebf-db039f36a4ca"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710950",
+      "updated_at": "2026-06-19T13:04:06.710950",
+      "metadata": null
+    },
+    "e3d9dbf9-5d5a-4d67-ba86-52937f700af1": {
+      "id": "e3d9dbf9-5d5a-4d67-ba86-52937f700af1",
+      "label": "knowledge-graph::relates-to::term-matching",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710959",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "relates-to",
+        "to_id": "666fec76-3ee5-4e5e-9095-ca4c456009bf"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710959",
+      "updated_at": "2026-06-19T13:04:06.710959",
+      "metadata": null
+    },
+    "63989748-8c21-45a7-92cc-c3631d053f66": {
+      "id": "63989748-8c21-45a7-92cc-c3631d053f66",
+      "label": "term-matching::relates-to::knowledge-graph",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710969",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "666fec76-3ee5-4e5e-9095-ca4c456009bf",
+        "link_type": "relates-to",
+        "to_id": "a816f2fd-141b-4def-aebf-db039f36a4ca"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710969",
+      "updated_at": "2026-06-19T13:04:06.710969",
+      "metadata": null
+    },
+    "ded8c74a-b00e-4c66-940a-ba3d7f4eaa0b": {
+      "id": "ded8c74a-b00e-4c66-940a-ba3d7f4eaa0b",
+      "label": "knowledge-graph::has::kg-thought",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710978",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "has",
+        "to_id": "70067b00-8cc2-45f1-96aa-e2a27f9d0de4"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710978",
+      "updated_at": "2026-06-19T13:04:06.710978",
+      "metadata": null
+    },
+    "67f333d3-9b7e-486e-818c-1cd8f7461e91": {
+      "id": "67f333d3-9b7e-486e-818c-1cd8f7461e91",
+      "label": "knowledge-graph::relates-to::knowledge-graph-rag",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710987",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "relates-to",
+        "to_id": "4457bd8f-84c6-4291-a386-904574a2c0c9"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710987",
+      "updated_at": "2026-06-19T13:04:06.710987",
+      "metadata": null
+    },
+    "a9774b84-4fc9-473a-9e8a-3b4a1722ba7b": {
+      "id": "a9774b84-4fc9-473a-9e8a-3b4a1722ba7b",
+      "label": "knowledge-graph-rag::relates-to::knowledge-graph",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.710995",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "4457bd8f-84c6-4291-a386-904574a2c0c9",
+        "link_type": "relates-to",
+        "to_id": "a816f2fd-141b-4def-aebf-db039f36a4ca"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.710995",
+      "updated_at": "2026-06-19T13:04:06.710995",
+      "metadata": null
+    },
+    "3b1cf4ba-c509-476a-95cf-d016c487e50c": {
+      "id": "3b1cf4ba-c509-476a-95cf-d016c487e50c",
+      "label": "knowledge-graph::uses::personalized-pagerank",
+      "weight": 1.0,
+      "last_fired": "2026-06-19T13:04:06.711004",
+      "description": null,
+      "entity_type": null,
+      "links_to": [],
+      "links_from": [],
+      "link_data": {
+        "from_id": "a816f2fd-141b-4def-aebf-db039f36a4ca",
+        "link_type": "uses",
+        "to_id": "7fc16f4f-bb87-4d53-9b84-2f7165ed37ab"
+      },
+      "hit_count": 0,
+      "created_at": "2026-06-19T13:04:06.711004",
+      "updated_at": "2026-06-19T13:04:06.711004",
       "metadata": null
     }
   }

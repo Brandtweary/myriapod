@@ -15,12 +15,14 @@
     "@earendil-works/pi-web-ui": "0.75.3",
     "@mariozechner/mini-lit": "^0.2.0",
     "lit": "^3.3.1",
-    "lucide": "^0.544.0"
+    "lucide": "^0.544.0",
+    "stemmer": "^2.0.1"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@tailwindcss/vite": "^4.1.17",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.3",
     "vite": "^7.1.6"
   },

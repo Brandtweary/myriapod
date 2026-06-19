@@ -25,7 +25,15 @@ import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { CYMBIONT_MODEL, CYMBIONT_THINKING_LEVEL } from "./cymbiont-model.js";
 import { OpenRouterKeyTab } from "./settings.js";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
-import { customConvertToLlm, registerCustomMessageRenderers } from "./custom-messages.js";
+import {
+	createKgContextMessage,
+	customConvertToLlm,
+	registerCustomMessageRenderers,
+} from "./custom-messages.js";
+import { Graph } from "./kg/graph.js";
+import { InjectedLedger } from "./kg/ledger.js";
+import { retrieve } from "./kg/retrieve.js";
+import type { StockGraphAsset, TermMatch, Triple } from "./kg/types.js";
 
 // Register custom message renderers
 registerCustomMessageRenderers();
@@ -93,6 +101,19 @@ let agentUnsubscribe: (() => void) | undefined;
 let lastUpdateAt = 0;
 let updateCount = 0;
 
+// --- Browser-local knowledge graph (no server; retrieval runs in-page) ---
+let kgGraph: Graph | undefined;
+// Per-conversation injected-ledger (cross-turn dedup). Reset on each createAgent.
+// NOTE: a RESTORED session starts with an empty ledger even though its saved
+// kg-context breadcrumbs are in the transcript — so the first turns after a
+// reload may re-inject already-present context (minor token waste, self-corrects
+// as the conversation continues). Acceptable for V1.
+let ledger = new InjectedLedger();
+let bodyHost: HTMLDivElement; // flex-row wrapper: [leftGutter, chatPanel, rightGutter]
+let leftGutter: HTMLDivElement; // term matches
+let rightGutter: HTMLDivElement; // triples
+let lastVacuum: { terms: TermMatch[]; triples: Triple[] } | null = null;
+
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
 // `state.messages` in place (push). So committed messages never repaint — the
@@ -112,9 +133,9 @@ const forceChatRepaint = () => {
 // no host render ever touches it (re-committing it mid-turn is what wiped the
 // streaming message). We only toggle which body element is visible.
 const updateBodyVisibility = () => {
-	if (!chatPanel || !aboutHost) return;
+	if (!bodyHost || !aboutHost) return;
 	const showAbout = currentView === "about";
-	chatPanel.style.display = showAbout ? "none" : "";
+	bodyHost.style.display = showAbout ? "none" : "";
 	aboutHost.style.display = showAbout ? "" : "none";
 };
 
@@ -205,6 +226,140 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+// Load the frozen stock graph (static asset, built by scripts/build-stock-kg.py)
+// into an in-page Graph. Retrieval is fully client-side — nothing hits a server.
+const loadStockGraph = async () => {
+	try {
+		const base = import.meta.env.BASE_URL ?? "/";
+		const res = await fetch(`${base}stock-kg.json`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const asset = (await res.json()) as StockGraphAsset;
+		kgGraph = new Graph(asset);
+		dbg(`stock KG loaded: ${asset.meta.node_count} nodes, ${asset.meta.edge_count} edges`);
+	} catch (err) {
+		dbgError("stock KG load failed — retrieval disabled:", err);
+		kgGraph = undefined;
+	}
+};
+
+// agent.prompt accepts a string or an AgentMessage[]; pull the user's text out.
+const extractUserText = (input: AgentMessage | AgentMessage[] | string): string => {
+	if (typeof input === "string") return input;
+	const msgs = Array.isArray(input) ? input : [input];
+	const parts: string[] = [];
+	for (const m of msgs) {
+		const c = (m as { content?: unknown }).content;
+		if (typeof c === "string") parts.push(c);
+		else if (Array.isArray(c))
+			for (const blk of c) {
+				if (blk && typeof blk === "object" && (blk as TextContent).type === "text") {
+					parts.push((blk as TextContent).text ?? "");
+				}
+			}
+	}
+	return parts.join(" ");
+};
+
+const lastAssistantText = (messages: AgentMessage[]): string => {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const c = (m as { content?: unknown }).content;
+		if (typeof c === "string") return c;
+		if (Array.isArray(c))
+			return c
+				.filter((b): b is TextContent => !!b && (b as TextContent).type === "text")
+				.map((b) => b.text ?? "")
+				.join(" ");
+		return "";
+	}
+	return "";
+};
+
+// The gutters: term matches (left) + triples (right). Owned plain DOM we update
+// imperatively from the latest retrieval's VACUUM set (full pre-dedup), so they
+// show what WOULD retrieve this turn even when the injection deduped some out.
+const renderGutters = () => {
+	if (!leftGutter || !rightGutter) return;
+	const terms = lastVacuum?.terms ?? [];
+	const triples = lastVacuum?.triples ?? [];
+	render(
+		html`
+			<div class="cw-gutter-inner">
+				<div class="cw-gutter-title">Nodes</div>
+				${
+					terms.length
+						? terms.map(
+								(t) => html`<div class="cw-term">
+									<div class="cw-term-label">${t.label}</div>
+									<div class="cw-term-desc">${t.description}</div>
+								</div>`,
+							)
+						: html`<div class="cw-gutter-empty">no matches</div>`
+				}
+			</div>
+		`,
+		leftGutter,
+	);
+	render(
+		html`
+			<div class="cw-gutter-inner">
+				<div class="cw-gutter-title">Relationships</div>
+				${
+					triples.length
+						? triples.map(
+								(t) => html`<div class="cw-triple">
+									<span class="cw-tri-s">${t.subject}</span>
+									<span class="cw-tri-p">--${t.predicate}--&gt;</span>
+									<span class="cw-tri-o">${t.object}</span>
+									${(t.clauses ?? []).map(
+										(c) => html`<div class="cw-clause">[${c.type.toUpperCase()}: ${c.text}]</div>`,
+									)}
+								</div>`,
+							)
+						: html`<div class="cw-gutter-empty">no triples</div>`
+				}
+			</div>
+		`,
+		rightGutter,
+	);
+};
+
+// Dynamic truncation: keep EVERY term visible, but progressively clamp the
+// descriptions (uniformly) until the column fits without scrolling. Few terms →
+// full descriptions; many terms → each shrinks toward its first line. Measured
+// against the live gutter height so it adapts to viewport + term count.
+const fitTermDescriptions = () => {
+	if (!leftGutter || leftGutter.clientHeight === 0) return;
+	const inner = leftGutter.querySelector<HTMLElement>(".cw-gutter-inner");
+	const descs = [...leftGutter.querySelectorAll<HTMLElement>(".cw-term-desc")];
+	if (!inner || !descs.length) return;
+	const apply = (n: number) => {
+		for (const d of descs) d.style.webkitLineClamp = String(n);
+	};
+	let clamp = 8; // generous start: a full ~60-word desc is ~8 lines at this width
+	apply(clamp);
+	// Reading scrollHeight forces a reflow; bounded to ≤7 iterations, once/turn.
+	while (clamp > 1 && inner.scrollHeight > leftGutter.clientHeight) {
+		clamp -= 1;
+		apply(clamp);
+	}
+};
+
+const updateGutters = (vacuum: { terms: TermMatch[]; triples: Triple[] }) => {
+	lastVacuum = vacuum;
+	renderGutters();
+	// Fit term descriptions to the column height after layout settles.
+	requestAnimationFrame(fitTermDescriptions);
+};
+
+// Re-fit on viewport resize (descriptions stay in the DOM; just re-clamp).
+let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener("resize", () => {
+	clearTimeout(resizeTimer);
+	resizeTimer = setTimeout(fitTermDescriptions, 150);
+});
+
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -221,6 +376,43 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
+
+	// Fresh per-conversation dedup ledger.
+	ledger = new InjectedLedger();
+
+	// DESIGN 2 INJECTION. Wrap the send path so that, BEFORE the run's context
+	// snapshot is taken, we: (1) run browser-local retrieval, (2) update the
+	// gutters with the full vacuum set, (3) append a persistent hidden kg-context
+	// breadcrumb of the deduped injection block to agent.state.messages. The
+	// breadcrumb accumulates across turns (like CC's additionalContext), so
+	// ledger dedup is correct rather than lossy. transformContext is NOT used —
+	// its output is ephemeral and would drop earlier turns' context.
+	const origPrompt = agent.prompt.bind(agent);
+	(agent as unknown as { prompt: (...a: unknown[]) => Promise<void> }).prompt = async (
+		input: unknown,
+		...rest: unknown[]
+	) => {
+		try {
+			if (kgGraph) {
+				const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
+				if (userText.trim()) {
+					const agentText = lastAssistantText(agent.state.messages);
+					const r = retrieve(kgGraph, ledger, userText, agentText);
+					updateGutters(r.vacuum);
+					if (r.injectionBlock) {
+						agent.state.messages = [...agent.state.messages, createKgContextMessage(r.injectionBlock)];
+					}
+					dbg(
+						`kg retrieve: ${r.vacuum.terms.length} terms, ${r.vacuum.triples.length} triples, ` +
+							`seeds=[${r.seeds.join(", ")}], injected=${r.injectionBlock ? "yes" : "no (deduped)"}`,
+					);
+				}
+			}
+		} catch (err) {
+			dbgError("kg retrieval failed (send proceeds without injection):", err);
+		}
+		return origPrompt(input as AgentMessage | AgentMessage[], ...(rest as []));
+	};
 
 	agentUnsubscribe = agent.subscribe((event: any) => {
 		// pi-agent-core 0.75.3 emits raw lifecycle events (message_start,
@@ -546,12 +738,28 @@ async function initApp() {
 	headerHost.className = "shrink-0";
 
 	chatPanel = new ChatPanel(); // mounted once, owns its own rendering/scrolling
+	chatPanel.classList.add("cw-chat");
+
+	// Retrieval gutters flank the centered chat column (term matches left, triples
+	// right) — always present (dedicated space, empty until the first match), only
+	// dropped on true mobile via the .cw-gutter media query.
+	leftGutter = document.createElement("div");
+	leftGutter.className = "cw-gutter cw-gutter-left";
+	rightGutter = document.createElement("div");
+	rightGutter.className = "cw-gutter cw-gutter-right";
+
+	bodyHost = document.createElement("div");
+	bodyHost.className = "cw-body";
+	bodyHost.append(leftGutter, chatPanel, rightGutter);
 
 	aboutHost = document.createElement("div");
 	aboutHost.className = "flex-1 min-h-0 overflow-y-auto";
 	render(renderAbout(), aboutHost);
 
-	app.append(headerHost, chatPanel, aboutHost);
+	app.append(headerHost, bodyHost, aboutHost);
+	renderGutters(); // initial empty state
+
+	await loadStockGraph();
 
 	// TODO: PersistentStorageDialog is broken upstream — export/import is the
 	// durability story instead.

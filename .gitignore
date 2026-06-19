@@ -1,6 +1,9 @@
 # Feature taskpads — planning artifacts, kept local, never tracked (blanket pattern)
 feature_taskpad_*.md
 
+# Machine-local agent dev rules — never published
+CLAUDE.local.md
+
 # Dependencies
 node_modules/
 .pnp

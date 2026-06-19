@@ -1,0 +1,4174 @@
+{
+  "term_match": {
+    "what is the knowledge graph": [
+      "knowledge-graph"
+    ],
+    "tell me about mmr reranking and diversity": [],
+    "how does ppr retrieval work": [
+      "ppr-retrieval"
+    ],
+    "explain whisper and stt fine tuning": [
+      "whisper"
+    ],
+    "what is cymbiont": [
+      "cymbiont"
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      "voice-harness"
+    ],
+    "knowledge-graph": [
+      "knowledge-graph"
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      "personalized-pagerank"
+    ],
+    "embeddings and minilm vectors": [
+      "miniLM"
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      "term-matching"
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      "claude-code"
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      "knowledge-graph"
+    ],
+    "what are knowledge graphs": [
+      "knowledge-graph"
+    ],
+    "how do the retrieval triples and term matches work": [],
+    "explain the ingestion agents and maintenance agents": [
+      "ingestion-agent",
+      "maintenance-agent"
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      "voice-harness",
+      "whisper"
+    ]
+  },
+  "seeds": {
+    "what is the knowledge graph": [
+      "knowledge-graph"
+    ],
+    "tell me about mmr reranking and diversity": [
+      "mmr-rerank"
+    ],
+    "how does ppr retrieval work": [
+      "ppr-retrieval"
+    ],
+    "explain whisper and stt fine tuning": [
+      "whisper"
+    ],
+    "what is cymbiont": [
+      "cymbiont"
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      "voice-harness"
+    ],
+    "knowledge-graph": [
+      "knowledge-graph"
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      "personalized-pagerank"
+    ],
+    "embeddings and minilm vectors": [
+      "miniLM"
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      "term-matching"
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      "claude-code"
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      "knowledge-graph"
+    ],
+    "what are knowledge graphs": [
+      "knowledge-graph"
+    ],
+    "how do the retrieval triples and term matches work": [
+      "term-matching"
+    ],
+    "explain the ingestion agents and maintenance agents": [
+      "ingestion-agent",
+      "maintenance-agent"
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      "voice-harness",
+      "whisper"
+    ]
+  },
+  "ppr_from_py_seeds": {
+    "what is the knowledge graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.677646
+      },
+      {
+        "subject": "knowledge-graph-memory",
+        "predicate": "is-a",
+        "object": "knowledge-graph",
+        "weight": 0.632055
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.626462
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.602639
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-thought",
+        "weight": 0.579161
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "knowledge-graph-rag",
+        "weight": 0.574924
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.166999
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.150382
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.143886
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.137396
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.13261
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.128948
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.127712
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.126742
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.126324
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "knowledge-graph-rag",
+        "weight": 0.123938
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.107054
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.101352
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "knowledge-graph-memory",
+        "weight": 0.097747
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "knowledge-graph-memory",
+        "weight": 0.094302
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.082006
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.072844
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "kg-thought",
+        "weight": 0.071784
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.071764
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.07176
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.066379
+      }
+    ],
+    "tell me about mmr reranking and diversity": [
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.500515
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.103723
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.753063
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "mmr-rerank",
+        "weight": 0.753063
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.626461
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.625937
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:docs/hyperparameters.md",
+        "weight": 0.59975
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "has",
+        "object": "mmr-lambda",
+        "weight": 0.505621
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.230071
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.207772
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.181473
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.126191
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.124414
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.106881
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.10538
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.104234
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.103808
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.103563
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.101668
+      },
+      {
+        "subject": "hub-suppression",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.101496
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "uses",
+        "object": "ppr-retrieval",
+        "weight": 0.100624
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.09983
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.097614
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.097443
+      },
+      {
+        "subject": "background-embed",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.096804
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.096707
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.094616
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.09157
+      },
+      {
+        "subject": "brainsim-uks",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.091075
+      },
+      {
+        "subject": "description-too-long-error",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.089689
+      }
+    ],
+    "how does ppr retrieval work": [
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.10216
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.737123
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "uses",
+        "object": "ppr-retrieval",
+        "weight": 0.733595
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.729108
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "mmr-rerank",
+        "weight": 0.729108
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.66498
+      },
+      {
+        "subject": "bfs-retrieval",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.556774
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "inv-freq-alpha",
+        "weight": 0.537651
+      },
+      {
+        "subject": "edge-discovery",
+        "predicate": "part-of",
+        "object": "ppr-retrieval",
+        "weight": 0.514765
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.203801
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.187021
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 0.15928
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.15198
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.124197
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.1165
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.111435
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.102292
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.101816
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.099252
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "uses",
+        "object": "bfs-retrieval",
+        "weight": 0.091024
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.087368
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.086978
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.080824
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:docs/hyperparameters.md",
+        "weight": 0.076805
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.075918
+      },
+      {
+        "subject": "hub-suppression",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.071424
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "uses",
+        "object": "kg-server",
+        "weight": 0.068778
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "knowledge-graph-memory",
+        "weight": 0.068254
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.065791
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "uses",
+        "object": "rag-watcher",
+        "weight": 0.063973
+      }
+    ],
+    "explain whisper and stt fine tuning": [
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.484481
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.429404
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 1.147265
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.856887
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "is-a",
+        "object": "whisper",
+        "weight": 0.804154
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.804154
+      },
+      {
+        "subject": "lora-finetuning",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.736629
+      },
+      {
+        "subject": "whisper",
+        "predicate": "uses",
+        "object": "voice-training-data",
+        "weight": 0.700574
+      },
+      {
+        "subject": "per-turn-audit-loop",
+        "predicate": "relates-to",
+        "object": "whisper",
+        "weight": 0.699365
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:docs/whisper_finetune.md",
+        "weight": 0.655379
+      },
+      {
+        "subject": "stt-text-replacements",
+        "predicate": "relates-to",
+        "object": "whisper",
+        "weight": 0.646555
+      },
+      {
+        "subject": "systemd",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.610515
+      },
+      {
+        "subject": "whisper",
+        "predicate": "uses",
+        "object": "ggml-format",
+        "weight": 0.571025
+      },
+      {
+        "subject": "stt-text-replacements",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.18393
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.167933
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.160294
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.137934
+      },
+      {
+        "subject": "lora-finetuning",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.130388
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "per-turn-audit-loop",
+        "weight": 0.11872
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.11247
+      },
+      {
+        "subject": "cymbiont-data-root",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.094176
+      },
+      {
+        "subject": "progressive-recorder",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.08987
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.089191
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.088138
+      },
+      {
+        "subject": "voice-config-toml",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.087873
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.085367
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.081536
+      },
+      {
+        "subject": "catastrophic-forgetting-replay",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.080189
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.079601
+      },
+      {
+        "subject": "config-toml",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.079361
+      }
+    ],
+    "what is cymbiont": [
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.545228
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.172946
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.006181
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.98818
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "pocket-tts",
+        "weight": 0.920726
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.886329
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "knowledge-graph-memory",
+        "weight": 0.880215
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "headless-agent",
+        "weight": 0.874293
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "pi-coding-agent",
+        "weight": 0.864083
+      },
+      {
+        "subject": "whisper-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.863243
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 0.845944
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.845879
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "per-turn-audit-loop",
+        "weight": 0.842652
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:CLAUDE.md",
+        "weight": 0.819261
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "knowledge-graph-rag",
+        "weight": 0.816336
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "pi",
+        "weight": 0.804118
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.803131
+      },
+      {
+        "subject": "install-sh",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.801064
+      },
+      {
+        "subject": "cymbiont-voice",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.800865
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "systemd",
+        "weight": 0.796142
+      },
+      {
+        "subject": "cymbiont-rag",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.780064
+      },
+      {
+        "subject": "pocket-tts-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.761826
+      },
+      {
+        "subject": "cymbiont-core",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.761101
+      },
+      {
+        "subject": "autonomic-memory",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.760491
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "relates-to",
+        "object": "zuhandenheit",
+        "weight": 0.758416
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "nltk",
+        "weight": 0.758416
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.133889
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.132378
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.125725
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.12442
+      }
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.497594
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.153373
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.859106
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper-cpp",
+        "weight": 0.814714
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.783318
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "pocket-tts",
+        "weight": 0.783318
+      },
+      {
+        "subject": "progressive-recorder",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.74006
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper-server",
+        "weight": 0.738423
+      },
+      {
+        "subject": "voice-training-data",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.692477
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:CLAUDE.md",
+        "weight": 0.662391
+      },
+      {
+        "subject": "cymbiont-voice",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.645632
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "hyprland",
+        "weight": 0.621297
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "pipewire",
+        "weight": 0.59761
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "wl-clipboard",
+        "weight": 0.58382
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.19841
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.194683
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.193113
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.179525
+      },
+      {
+        "subject": "hyprland",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.175371
+      },
+      {
+        "subject": "pipewire",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.17412
+      },
+      {
+        "subject": "progressive-recorder",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.143006
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.131825
+      },
+      {
+        "subject": "lora-finetuning",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.110605
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.110065
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.106506
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.104193
+      },
+      {
+        "subject": "cymbiont-data-root",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.103498
+      },
+      {
+        "subject": "large-v3",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.101729
+      },
+      {
+        "subject": "stt-text-replacements",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.10159
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.101405
+      }
+    ],
+    "knowledge-graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.677646
+      },
+      {
+        "subject": "knowledge-graph-memory",
+        "predicate": "is-a",
+        "object": "knowledge-graph",
+        "weight": 0.632055
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.626462
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.602639
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-thought",
+        "weight": 0.579161
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "knowledge-graph-rag",
+        "weight": 0.574924
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.166999
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.150382
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.143886
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.137396
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.13261
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.128948
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.127712
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.126742
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.126324
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "knowledge-graph-rag",
+        "weight": 0.123938
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.107054
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.101352
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "knowledge-graph-memory",
+        "weight": 0.097747
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "knowledge-graph-memory",
+        "weight": 0.094302
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.082006
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.072844
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "kg-thought",
+        "weight": 0.071784
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.071764
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.07176
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.066379
+      }
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.526843
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.846807
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.652133
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.623542
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "kg-thought",
+        "weight": 0.572282
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "hub-suppression",
+        "weight": 0.522043
+      },
+      {
+        "subject": "hub-suppression",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.345926
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.330925
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.288237
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.256578
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.241563
+      },
+      {
+        "subject": "brainsim-uks",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.202155
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.190716
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.186571
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.184316
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.184085
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.180322
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.178875
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.178287
+      },
+      {
+        "subject": "description-too-long-error",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.169789
+      },
+      {
+        "subject": "injected-ledger",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.16872
+      },
+      {
+        "subject": "description-word-cap",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.166655
+      },
+      {
+        "subject": "description-correction-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.16645
+      },
+      {
+        "subject": "expire-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.165845
+      },
+      {
+        "subject": "colonization-verdict-registry",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.165545
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.16538
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.16511
+      },
+      {
+        "subject": "session-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.165055
+      },
+      {
+        "subject": "hook-byte-limit",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.163425
+      },
+      {
+        "subject": "because-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.16295
+      }
+    ],
+    "embeddings and minilm vectors": [
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.883959
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.704134
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.648626
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.565231
+      },
+      {
+        "subject": "cymbiont-rag",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.535322
+      },
+      {
+        "subject": "background-embed",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.534888
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.187691
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.164014
+      },
+      {
+        "subject": "background-embed",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.163052
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.162277
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.158993
+      },
+      {
+        "subject": "cymbiont-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.15543
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.153819
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "relates-to",
+        "object": "kg-engine",
+        "weight": 0.143092
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.133405
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.12182
+      },
+      {
+        "subject": "cymbiont-rag",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.118359
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.111388
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "uses",
+        "object": "kg-server",
+        "weight": 0.111192
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "has",
+        "object": "background-embed",
+        "weight": 0.108115
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.086006
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.082409
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.081329
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.07896
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.077315
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "inspired-by",
+        "object": "brainsim-uks",
+        "weight": 0.073959
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.073678
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.070497
+      },
+      {
+        "subject": "injected-ledger",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.070279
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "kg-store",
+        "weight": 0.069336
+      }
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.66473
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "part-of",
+        "object": "kg-retriever",
+        "weight": 0.655523
+      },
+      {
+        "subject": "whisper-glossary-biasing",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.527651
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "uses",
+        "object": "porter-stemmer",
+        "weight": 0.481072
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.272192
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.21121
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.157406
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.146065
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.131666
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.118471
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.117209
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.116375
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.116102
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.115291
+      },
+      {
+        "subject": "hit-count",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114725
+      },
+      {
+        "subject": "injected-ledger",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114685
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114582
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.113805
+      },
+      {
+        "subject": "expire-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.11156
+      },
+      {
+        "subject": "remove-edge-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.109201
+      },
+      {
+        "subject": "cross-turn-dedup",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.108437
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.108204
+      },
+      {
+        "subject": "hook-byte-limit",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.107776
+      },
+      {
+        "subject": "brainsim-uks",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.10608
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.105703
+      },
+      {
+        "subject": "description-too-long-error",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.10507
+      }
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      {
+        "subject": "claude-code",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.59406
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 1.177592
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "relates-to",
+        "object": "pi-coding-agent",
+        "weight": 0.673258
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "relates-to",
+        "object": "pi",
+        "weight": 0.581553
+      },
+      {
+        "subject": "coding-agent-harness",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 0.574144
+      },
+      {
+        "subject": "cymbiont-ts",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 0.509463
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.322913
+      },
+      {
+        "subject": "coding-agent-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.268418
+      },
+      {
+        "subject": "cymbiont-ts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.245662
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "pi-coding-agent",
+        "weight": 0.241478
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "pi",
+        "weight": 0.233255
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.20306
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.179616
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.177041
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.167973
+      },
+      {
+        "subject": "pi",
+        "predicate": "relates-to",
+        "object": "pi-coding-agent",
+        "weight": 0.16641
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.16641
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.163285
+      },
+      {
+        "subject": "lora-finetuning",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.160578
+      },
+      {
+        "subject": "progressive-recorder",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.160303
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.15671
+      },
+      {
+        "subject": "cymbiont-data-root",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.155534
+      },
+      {
+        "subject": "commands-ts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.152659
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.15199
+      },
+      {
+        "subject": "install-sh",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.151098
+      },
+      {
+        "subject": "cymbiont-kg",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.150353
+      },
+      {
+        "subject": "config-toml",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.14915
+      },
+      {
+        "subject": "voice-config-toml",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.149093
+      },
+      {
+        "subject": "cymbiont-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.14725
+      },
+      {
+        "subject": "hard-timeout",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.146985
+      }
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.677646
+      },
+      {
+        "subject": "knowledge-graph-memory",
+        "predicate": "is-a",
+        "object": "knowledge-graph",
+        "weight": 0.632055
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.626462
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.602639
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-thought",
+        "weight": 0.579161
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "knowledge-graph-rag",
+        "weight": 0.574924
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.166999
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.150382
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.143886
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.137396
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.13261
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.128948
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.127712
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.126742
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.126324
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "knowledge-graph-rag",
+        "weight": 0.123938
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.107054
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.101352
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "knowledge-graph-memory",
+        "weight": 0.097747
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "knowledge-graph-memory",
+        "weight": 0.094302
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.082006
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.072844
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "kg-thought",
+        "weight": 0.071784
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.071764
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.07176
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.066379
+      }
+    ],
+    "what are knowledge graphs": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.677646
+      },
+      {
+        "subject": "knowledge-graph-memory",
+        "predicate": "is-a",
+        "object": "knowledge-graph",
+        "weight": 0.632055
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.626462
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.602639
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-thought",
+        "weight": 0.579161
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "knowledge-graph-rag",
+        "weight": 0.574924
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.166999
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.150382
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "kg-engine",
+        "weight": 0.143886
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.137396
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.13261
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.128948
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.127712
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.126742
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.126324
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "knowledge-graph-rag",
+        "weight": 0.123938
+      },
+      {
+        "subject": "knowledge-graph-rag",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.107054
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.101352
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "knowledge-graph-memory",
+        "weight": 0.097747
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "knowledge-graph-memory",
+        "weight": 0.094302
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.082006
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 0.072844
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "uses",
+        "object": "kg-thought",
+        "weight": 0.071784
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.071764
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.07176
+      },
+      {
+        "subject": "rag-watcher",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.066379
+      }
+    ],
+    "how do the retrieval triples and term matches work": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.66473
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "part-of",
+        "object": "kg-retriever",
+        "weight": 0.655523
+      },
+      {
+        "subject": "whisper-glossary-biasing",
+        "predicate": "uses",
+        "object": "term-matching",
+        "weight": 0.527651
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "uses",
+        "object": "porter-stemmer",
+        "weight": 0.481072
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.272192
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.21121
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.157406
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.146065
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 0.131666
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 0.127964
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.118471
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.117209
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.116375
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.116102
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.115291
+      },
+      {
+        "subject": "hit-count",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114725
+      },
+      {
+        "subject": "injected-ledger",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114685
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.114582
+      },
+      {
+        "subject": "kg-thought",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.113805
+      },
+      {
+        "subject": "expire-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.11156
+      },
+      {
+        "subject": "remove-edge-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.109201
+      },
+      {
+        "subject": "cross-turn-dedup",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.108437
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.108204
+      },
+      {
+        "subject": "hook-byte-limit",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.107776
+      },
+      {
+        "subject": "brainsim-uks",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.10608
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "ppr-retrieval",
+        "weight": 0.105703
+      },
+      {
+        "subject": "description-too-long-error",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.10507
+      }
+    ],
+    "explain the ingestion agents and maintenance agents": [
+      {
+        "subject": "maintenance-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.864305
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.846785
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "uses",
+        "object": "kg-tool",
+        "weight": 0.375691
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "relates-to",
+        "object": "ingestion-agent",
+        "weight": 0.371169
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "produces",
+        "object": "description-too-long-error",
+        "weight": 0.303204
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "uses",
+        "object": "colonization-verdict-registry",
+        "weight": 0.300483
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "has",
+        "object": "description-word-cap",
+        "weight": 0.286313
+      },
+      {
+        "subject": "kg-ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.253424
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "produces",
+        "object": "kg-issues",
+        "weight": 0.252315
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "flags",
+        "object": "colonized-node",
+        "weight": 0.248613
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.244965
+      },
+      {
+        "subject": "colonization-verdict-registry",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.24065
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "creates",
+        "object": "alias-of-edge",
+        "weight": 0.240066
+      },
+      {
+        "subject": "description-too-long-error",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.225828
+      },
+      {
+        "subject": "description-word-cap",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.21881
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.197846
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.181567
+      },
+      {
+        "subject": "description-correction-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.167525
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.162296
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.161579
+      },
+      {
+        "subject": "session-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.15824
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.151837
+      },
+      {
+        "subject": "kg-retriever",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.148373
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.147451
+      },
+      {
+        "subject": "expire-operation",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.145245
+      },
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.14418
+      },
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.142208
+      },
+      {
+        "subject": "ingest-endpoint",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.141816
+      },
+      {
+        "subject": "kg-merge-pattern",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.141169
+      },
+      {
+        "subject": "injected-ledger",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.1401
+      }
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.857997
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.838803
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.817764
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.758188
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.628667
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.613838
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "is-a",
+        "object": "whisper",
+        "weight": 0.450102
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.450102
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper-cpp",
+        "weight": 0.444781
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.406291
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "pocket-tts",
+        "weight": 0.406291
+      },
+      {
+        "subject": "lora-finetuning",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.392274
+      },
+      {
+        "subject": "progressive-recorder",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.384846
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper-server",
+        "weight": 0.383814
+      },
+      {
+        "subject": "whisper",
+        "predicate": "uses",
+        "object": "voice-training-data",
+        "weight": 0.380971
+      },
+      {
+        "subject": "voice-training-data",
+        "predicate": "part-of",
+        "object": "voice-harness",
+        "weight": 0.377539
+      },
+      {
+        "subject": "per-turn-audit-loop",
+        "predicate": "relates-to",
+        "object": "whisper",
+        "weight": 0.37155
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:docs/whisper_finetune.md",
+        "weight": 0.348813
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:CLAUDE.md",
+        "weight": 0.343521
+      },
+      {
+        "subject": "stt-text-replacements",
+        "predicate": "relates-to",
+        "object": "whisper",
+        "weight": 0.343502
+      },
+      {
+        "subject": "cymbiont-voice",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 0.334554
+      },
+      {
+        "subject": "systemd",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.324202
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "hyprland",
+        "weight": 0.321995
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "pipewire",
+        "weight": 0.30973
+      },
+      {
+        "subject": "whisper",
+        "predicate": "uses",
+        "object": "ggml-format",
+        "weight": 0.302755
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "wl-clipboard",
+        "weight": 0.302144
+      },
+      {
+        "subject": "whisper-cpp",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.181311
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.179359
+      },
+      {
+        "subject": "stt-text-replacements",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.142765
+      },
+      {
+        "subject": "pocket-tts",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.134361
+      }
+    ]
+  },
+  "full_pipeline": {
+    "what is the knowledge graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "tell me about mmr reranking and diversity": [
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.500515
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.103723
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.753063
+      }
+    ],
+    "how does ppr retrieval work": [
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.10216
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "uses",
+        "object": "ppr-retrieval",
+        "weight": 0.733595
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.729108
+      }
+    ],
+    "explain whisper and stt fine tuning": [
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.484481
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.429404
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 1.147265
+      }
+    ],
+    "what is cymbiont": [
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.545228
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.172946
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.006181
+      }
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.497594
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.153373
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.859106
+      }
+    ],
+    "knowledge-graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.526843
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.846807
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.652133
+      }
+    ],
+    "embeddings and minilm vectors": [
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.883959
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.648626
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.704134
+      }
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      }
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      {
+        "subject": "claude-code",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.59406
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 1.177592
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "relates-to",
+        "object": "pi-coding-agent",
+        "weight": 0.673258
+      }
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "what are knowledge graphs": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "how do the retrieval triples and term matches work": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      }
+    ],
+    "explain the ingestion agents and maintenance agents": [
+      {
+        "subject": "maintenance-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.864305
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.846785
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "uses",
+        "object": "kg-tool",
+        "weight": 0.375691
+      }
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.857997
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.838803
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.817764
+      }
+    ]
+  },
+  "retriever_triples": {
+    "what is the knowledge graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "tell me about mmr reranking and diversity": [
+      {
+        "subject": "mmr-rerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.500515
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.103723
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.753063
+      }
+    ],
+    "how does ppr retrieval work": [
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "part-of",
+        "object": "kg-server",
+        "weight": 1.10216
+      },
+      {
+        "subject": "edge-clause",
+        "predicate": "uses",
+        "object": "ppr-retrieval",
+        "weight": 0.733595
+      },
+      {
+        "subject": "ppr-retrieval",
+        "predicate": "relates-to",
+        "object": "mmr-rerank",
+        "weight": 0.729108
+      }
+    ],
+    "explain whisper and stt fine tuning": [
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.484481
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.429404
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 1.147265
+      }
+    ],
+    "what is cymbiont": [
+      {
+        "subject": "cymbiont",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.545228
+      },
+      {
+        "subject": "kg-server",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.172946
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.006181
+      }
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.497594
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "has",
+        "object": "voice-harness",
+        "weight": 1.153373
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.859106
+      }
+    ],
+    "knowledge-graph": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      {
+        "subject": "personalized-pagerank",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.526843
+      },
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.846807
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "uses",
+        "object": "personalized-pagerank",
+        "weight": 0.652133
+      }
+    ],
+    "embeddings and minilm vectors": [
+      {
+        "subject": "kg-engine",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.883959
+      },
+      {
+        "subject": "mmr-rerank",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.648626
+      },
+      {
+        "subject": "kg-tool",
+        "predicate": "uses",
+        "object": "miniLM",
+        "weight": 0.704134
+      }
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      }
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      {
+        "subject": "claude-code",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 1.59406
+      },
+      {
+        "subject": "cymbiont",
+        "predicate": "uses",
+        "object": "claude-code",
+        "weight": 1.177592
+      },
+      {
+        "subject": "claude-code",
+        "predicate": "relates-to",
+        "object": "pi-coding-agent",
+        "weight": 0.673258
+      }
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "what are knowledge graphs": [
+      {
+        "subject": "knowledge-graph",
+        "predicate": "part-of",
+        "object": "cymbiont",
+        "weight": 1.109146
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-server",
+        "weight": 1.035392
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "has",
+        "object": "kg-engine",
+        "weight": 0.855548
+      }
+    ],
+    "how do the retrieval triples and term matches work": [
+      {
+        "subject": "term-matching",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 1.481854
+      },
+      {
+        "subject": "edge-expiration",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.709356
+      },
+      {
+        "subject": "knowledge-graph",
+        "predicate": "relates-to",
+        "object": "term-matching",
+        "weight": 0.705158
+      }
+    ],
+    "explain the ingestion agents and maintenance agents": [
+      {
+        "subject": "maintenance-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.864305
+      },
+      {
+        "subject": "ingestion-agent",
+        "predicate": "mentioned-in",
+        "object": "doc:cymbiont/kg/CLAUDE.md",
+        "weight": 0.846785
+      },
+      {
+        "subject": "maintenance-agent",
+        "predicate": "uses",
+        "object": "kg-tool",
+        "weight": 0.375691
+      }
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      {
+        "subject": "voice-harness",
+        "predicate": "uses",
+        "object": "whisper",
+        "weight": 0.857997
+      },
+      {
+        "subject": "whisper",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.838803
+      },
+      {
+        "subject": "voice-harness",
+        "predicate": "mentioned-in",
+        "object": "doc:README.md",
+        "weight": 0.817764
+      }
+    ]
+  },
+  "retriever_terms": {
+    "what is the knowledge graph": [
+      "knowledge-graph"
+    ],
+    "tell me about mmr reranking and diversity": [],
+    "how does ppr retrieval work": [
+      "ppr-retrieval"
+    ],
+    "explain whisper and stt fine tuning": [
+      "whisper"
+    ],
+    "what is cymbiont": [
+      "cymbiont"
+    ],
+    "who is hector": [],
+    "the voice harness records audio": [
+      "voice-harness"
+    ],
+    "knowledge-graph": [
+      "knowledge-graph"
+    ],
+    "mmr": [],
+    "personalized pagerank": [
+      "personalized-pagerank"
+    ],
+    "embeddings and minilm vectors": [
+      "miniLM"
+    ],
+    "the audit agent judges relevance": [],
+    "term matching and stemming": [
+      "term-matching"
+    ],
+    "nothing matches here xyzzy plover": [],
+    "ingestion extracts entities and relationships": [],
+    "claude code hooks and the retriever": [
+      "claude-code"
+    ],
+    "running running runs ran": [],
+    "node embeddings npz format": [],
+    "can you tell me about knowledge graphs briefly": [
+      "knowledge-graph"
+    ],
+    "what are knowledge graphs": [
+      "knowledge-graph"
+    ],
+    "how do the retrieval triples and term matches work": [],
+    "explain the ingestion agents and maintenance agents": [
+      "ingestion-agent",
+      "maintenance-agent"
+    ],
+    "tell me about whisper finetuning and the voice harnesses": [
+      "voice-harness",
+      "whisper"
+    ]
+  },
+  "retrieve_block": {
+    "what is the knowledge graph": "<kg-context>\n## Term Descriptions\n**knowledge-graph**: Cymbiont's core memory substrate: a property graph where entities and their relationships are first-class Thought nodes and edges. Retrieval combines Personalized PageRank diffusion with label term-matching, injected as context every turn. It is autonomic \u2014 background hooks and agents extract, store, and recall knowledge; neither the coding agent nor any operator manually writes or queries a memory. The graph is timeless: no decay, no pruning, every edge weight 1.0.\n\n## Knowledge Graph\n[1] knowledge-graph --part-of--> cymbiont\n[2] knowledge-graph --has--> kg-server\n[3] knowledge-graph --has--> kg-engine\n</kg-context>",
+    "tell me about mmr reranking and diversity": "<kg-context>\n## Knowledge Graph\n[1] mmr-rerank --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[2] mmr-rerank --part-of--> kg-server\n[3] ppr-retrieval --relates-to--> mmr-rerank\n</kg-context>",
+    "how does ppr retrieval work": "<kg-context>\n## Term Descriptions\n**ppr-retrieval**: Personalized PageRank traversal path used during KG context retrieval; carries edge clauses inline.\n\n## Knowledge Graph\n[1] ppr-retrieval --part-of--> kg-server\n[2] edge-clause --uses--> ppr-retrieval\n[3] ppr-retrieval --relates-to--> mmr-rerank\n</kg-context>",
+    "explain whisper and stt fine tuning": "<kg-context>\n## Term Descriptions\n**whisper**: OpenAI's automatic speech recognition model that Cymbiont uses as its STT backend and fine-tunes for speaker personalization.\n\n## Knowledge Graph\n[1] whisper --mentioned-in--> doc:README.md\n[2] whisper --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[3] cymbiont --uses--> whisper\n</kg-context>",
+    "what is cymbiont": "<kg-context>\n## Term Descriptions\n**cymbiont**: Python package and overall system providing knowledge-graph, RAG, voice, and coding-agent integration capabilities.\n\n## Knowledge Graph\n[1] cymbiont --mentioned-in--> doc:README.md\n[2] kg-server --part-of--> cymbiont\n[3] cymbiont --has--> voice-harness\n</kg-context>",
+    "who is hector": null,
+    "the voice harness records audio": "<kg-context>\n## Term Descriptions\n**voice-harness**: Speech-to-text in / text-to-speech out subsystem that accumulates fine-tuning data passively during use.\n\n## Knowledge Graph\n[1] voice-harness --mentioned-in--> doc:README.md\n[2] cymbiont --has--> voice-harness\n[3] voice-harness --uses--> whisper\n</kg-context>",
+    "knowledge-graph": "<kg-context>\n## Term Descriptions\n**knowledge-graph**: Cymbiont's core memory substrate: a property graph where entities and their relationships are first-class Thought nodes and edges. Retrieval combines Personalized PageRank diffusion with label term-matching, injected as context every turn. It is autonomic \u2014 background hooks and agents extract, store, and recall knowledge; neither the coding agent nor any operator manually writes or queries a memory. The graph is timeless: no decay, no pruning, every edge weight 1.0.\n\n## Knowledge Graph\n[1] knowledge-graph --part-of--> cymbiont\n[2] knowledge-graph --has--> kg-server\n[3] knowledge-graph --has--> kg-engine\n</kg-context>",
+    "mmr": null,
+    "personalized pagerank": "<kg-context>\n## Term Descriptions\n**personalized-pagerank**: Graph traversal algorithm used for KG retrieval seed expansion; is-a edges enable transitive discovery of connected nodes.\n\n## Knowledge Graph\n[1] personalized-pagerank --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[2] kg-engine --uses--> personalized-pagerank\n[3] knowledge-graph --uses--> personalized-pagerank\n</kg-context>",
+    "embeddings and minilm vectors": "<kg-context>\n## Term Descriptions\n**miniLM**: Sentence embedding model served by Cymbiont's RAG service to power KG node embeddings.\n\n## Knowledge Graph\n[1] kg-engine --uses--> miniLM\n[2] mmr-rerank --uses--> miniLM\n[3] kg-tool --uses--> miniLM\n</kg-context>",
+    "the audit agent judges relevance": null,
+    "term matching and stemming": "<kg-context>\n## Term Descriptions\n**term-matching**: KG-based keyword router that matches node labels against user input text to retrieve relevant term descriptions.\n\n## Knowledge Graph\n[1] term-matching --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[2] edge-expiration --relates-to--> term-matching\n[3] knowledge-graph --relates-to--> term-matching\n</kg-context>",
+    "nothing matches here xyzzy plover": null,
+    "ingestion extracts entities and relationships": null,
+    "claude code hooks and the retriever": "<kg-context>\n## Term Descriptions\n**claude-code**: Anthropic's coding agent, one of the supported integrations for the Cymbiont memory harness.\n\n## Knowledge Graph\n[1] claude-code --mentioned-in--> doc:README.md\n[2] cymbiont --uses--> claude-code\n[3] claude-code --relates-to--> pi-coding-agent\n</kg-context>",
+    "running running runs ran": null,
+    "node embeddings npz format": null,
+    "can you tell me about knowledge graphs briefly": "<kg-context>\n## Term Descriptions\n**knowledge-graph**: Cymbiont's core memory substrate: a property graph where entities and their relationships are first-class Thought nodes and edges. Retrieval combines Personalized PageRank diffusion with label term-matching, injected as context every turn. It is autonomic \u2014 background hooks and agents extract, store, and recall knowledge; neither the coding agent nor any operator manually writes or queries a memory. The graph is timeless: no decay, no pruning, every edge weight 1.0.\n\n## Knowledge Graph\n[1] knowledge-graph --part-of--> cymbiont\n[2] knowledge-graph --has--> kg-server\n[3] knowledge-graph --has--> kg-engine\n</kg-context>",
+    "what are knowledge graphs": "<kg-context>\n## Term Descriptions\n**knowledge-graph**: Cymbiont's core memory substrate: a property graph where entities and their relationships are first-class Thought nodes and edges. Retrieval combines Personalized PageRank diffusion with label term-matching, injected as context every turn. It is autonomic \u2014 background hooks and agents extract, store, and recall knowledge; neither the coding agent nor any operator manually writes or queries a memory. The graph is timeless: no decay, no pruning, every edge weight 1.0.\n\n## Knowledge Graph\n[1] knowledge-graph --part-of--> cymbiont\n[2] knowledge-graph --has--> kg-server\n[3] knowledge-graph --has--> kg-engine\n</kg-context>",
+    "how do the retrieval triples and term matches work": "<kg-context>\n## Knowledge Graph\n[1] term-matching --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[2] edge-expiration --relates-to--> term-matching\n[3] knowledge-graph --relates-to--> term-matching\n</kg-context>",
+    "explain the ingestion agents and maintenance agents": "<kg-context>\n## Term Descriptions\n**ingestion-agent**: Headless LLM agent firing every 5 messages and at session end to extract entities and relationships from the conversation window and merge them into the KG; primary owner of node descriptions.\n**maintenance-agent**: Daily scheduled agent performing semantic dedup, orphan cleanup, colonization flagging grounded in centrality, and health reporting; writes findings to kg-issues.jsonl for human review.\n\n## Knowledge Graph\n[1] maintenance-agent --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[2] ingestion-agent --mentioned-in--> doc:cymbiont/kg/CLAUDE.md\n[3] maintenance-agent --uses--> kg-tool\n</kg-context>",
+    "tell me about whisper finetuning and the voice harnesses": "<kg-context>\n## Term Descriptions\n**voice-harness**: Speech-to-text in / text-to-speech out subsystem that accumulates fine-tuning data passively during use.\n**whisper**: OpenAI's automatic speech recognition model that Cymbiont uses as its STT backend and fine-tunes for speaker personalization.\n\n## Knowledge Graph\n[1] voice-harness --uses--> whisper\n[2] whisper --mentioned-in--> doc:README.md\n[3] voice-harness --mentioned-in--> doc:README.md\n</kg-context>"
+  },
+  "stems": {
+    "about": "about",
+    "active": "activ",
+    "adapter": "adapt",
+    "agent": "agent",
+    "agent-timeout": "agent-timeout",
+    "agents": "agent",
+    "alias": "alia",
+    "alias-of-edge": "alias-of-edg",
+    "alignment": "align",
+    "alpha": "alpha",
+    "and": "and",
+    "are": "are",
+    "atomic": "atom",
+    "audio": "audio",
+    "audit": "audit",
+    "audit-reports": "audit-report",
+    "autonomic": "autonom",
+    "autonomic-memory": "autonomic-memori",
+    "background": "background",
+    "background-embed": "background-emb",
+    "bad": "bad",
+    "bad-clauses": "bad-claus",
+    "batch": "batch",
+    "batch-import-endpoint": "batch-import-endpoint",
+    "batch-update-endpoint": "batch-update-endpoint",
+    "because": "becaus",
+    "because-clause": "because-claus",
+    "bfs": "bf",
+    "bfs-retrieval": "bfs-retriev",
+    "biasing": "bias",
+    "brainsim": "brainsim",
+    "brainsim-uks": "brainsim-uk",
+    "briefly": "briefli",
+    "budget": "budget",
+    "buffer": "buffer",
+    "build": "build",
+    "build-whisper-prompt": "build-whisper-prompt",
+    "byte": "byte",
+    "can": "can",
+    "cap": "cap",
+    "catastrophic": "catastroph",
+    "catastrophic-forgetting": "catastrophic-forget",
+    "catastrophic-forgetting-replay": "catastrophic-forgetting-replay",
+    "charles": "charl",
+    "charles-simon": "charles-simon",
+    "claude": "claud",
+    "claude-code": "claude-cod",
+    "clause": "claus",
+    "clauses": "claus",
+    "cleanup": "cleanup",
+    "clipboard": "clipboard",
+    "cmake": "cmake",
+    "code": "code",
+    "coding": "code",
+    "coding-agent-harness": "coding-agent-har",
+    "colonization": "colon",
+    "colonization-verdict-registry": "colonization-verdict-registri",
+    "colonization-verdicts": "colonization-verdict",
+    "colonized": "colon",
+    "colonized-node": "colonized-nod",
+    "commands": "command",
+    "commands-ts": "commands-t",
+    "commutative": "commut",
+    "commutative-edge-type": "commutative-edge-typ",
+    "config": "config",
+    "config-toml": "config-toml",
+    "context": "context",
+    "core": "core",
+    "correction": "correct",
+    "corrector": "corrector",
+    "count": "count",
+    "cpp": "cpp",
+    "cross": "cross",
+    "cross-turn-dedup": "cross-turn-dedup",
+    "cuda": "cuda",
+    "cuda-gpu": "cuda-gpu",
+    "cymbiont": "cymbiont",
+    "cymbiont-active-harness": "cymbiont-active-har",
+    "cymbiont-core": "cymbiont-cor",
+    "cymbiont-data-root": "cymbiont-data-root",
+    "cymbiont-kg": "cymbiont-kg",
+    "cymbiont-rag": "cymbiont-rag",
+    "cymbiont-ts": "cymbiont-t",
+    "cymbiont-voice": "cymbiont-voic",
+    "data": "data",
+    "dedup": "dedup",
+    "describe": "describ",
+    "describe-corrector": "describe-corrector",
+    "description": "descript",
+    "description-correction-agent": "description-correction-ag",
+    "description-too-long-error": "description-too-long-error",
+    "description-word-cap": "description-word-cap",
+    "diff": "diff",
+    "diff-sync": "diff-sync",
+    "diff-sync-pipeline": "diff-sync-pipelin",
+    "discovery": "discoveri",
+    "diversity": "divers",
+    "do": "do",
+    "doc": "doc",
+    "doc:claude.md": "doc:claude.md",
+    "doc:cymbiont/kg/claude.md": "doc:cymbiont/kg/claude.md",
+    "doc:cymbiont/voice/claude.md": "doc:cymbiont/voice/claude.md",
+    "doc:docs/hyperparameters.md": "doc:docs/hyperparameters.md",
+    "doc:docs/whisper_finetune.md": "doc:docs/whisper_finetune.md",
+    "doc:readme.md": "doc:readme.md",
+    "docs": "doc",
+    "does": "doe",
+    "edge": "edg",
+    "edge-clause": "edge-claus",
+    "edge-discovery": "edge-discoveri",
+    "edge-expiration": "edge-expir",
+    "edge-signature": "edge-signatur",
+    "embed": "emb",
+    "embeddings": "embed",
+    "endpoint": "endpoint",
+    "engine": "engin",
+    "english": "english",
+    "english-text-normalizer": "english-text-norm",
+    "entities": "entiti",
+    "error": "error",
+    "errors": "error",
+    "every": "everi",
+    "exclusive": "exclus",
+    "expiration": "expir",
+    "expire": "expir",
+    "expire-edge": "expire-edg",
+    "expire-operation": "expire-oper",
+    "explain": "explain",
+    "extraction": "extract",
+    "extraction-prompts": "extraction-prompt",
+    "extracts": "extract",
+    "face": "face",
+    "file": "file",
+    "fine": "fine",
+    "finetune": "finetun",
+    "finetuning": "finetun",
+    "forgetting": "forget",
+    "format": "format",
+    "freq": "freq",
+    "ggml": "ggml",
+    "ggml-format": "ggml-format",
+    "glossary": "glossari",
+    "gpu": "gpu",
+    "gpu-exclusive-mode": "gpu-exclusive-mod",
+    "graph": "graph",
+    "graph-traversal": "graph-travers",
+    "graphs": "graph",
+    "guard": "guard",
+    "hard": "hard",
+    "hard-timeout": "hard-timeout",
+    "harness": "har",
+    "harness-errors": "harness-error",
+    "harness-errors-log": "harness-errors-log",
+    "harnesses": "har",
+    "headless": "headless",
+    "headless-agent": "headless-ag",
+    "hector": "hector",
+    "here": "here",
+    "hit": "hit",
+    "hit-count": "hit-count",
+    "hook": "hook",
+    "hook-budget": "hook-budget",
+    "hook-byte-limit": "hook-byte-limit",
+    "hooks": "hook",
+    "how": "how",
+    "hub": "hub",
+    "hub-suppression": "hub-suppress",
+    "hugging": "hug",
+    "hugging-face": "hugging-fac",
+    "hyperparameters": "hyperparamet",
+    "hyprland": "hyprland",
+    "import": "import",
+    "ingest": "ingest",
+    "ingest-endpoint": "ingest-endpoint",
+    "ingest-pipeline": "ingest-pipelin",
+    "ingest-trigger-every": "ingest-trigger-everi",
+    "ingestion": "ingest",
+    "ingestion-agent": "ingestion-ag",
+    "injected": "inject",
+    "injected-ledger": "injected-ledg",
+    "install": "instal",
+    "install-sh": "install-sh",
+    "inv": "inv",
+    "inv-freq-alpha": "inv-freq-alpha",
+    "is": "is",
+    "issues": "issu",
+    "jaro": "jaro",
+    "jaro-winkler": "jaro-winkl",
+    "json": "json",
+    "judges": "judg",
+    "kg": "kg",
+    "kg-engine": "kg-engin",
+    "kg-ingestion-agent": "kg-ingestion-ag",
+    "kg-issues": "kg-issu",
+    "kg-merge-pattern": "kg-merge-pattern",
+    "kg-retriever": "kg-retriev",
+    "kg-server": "kg-server",
+    "kg-store": "kg-store",
+    "kg-thought": "kg-thought",
+    "kg-tool": "kg-tool",
+    "knowledge": "knowledg",
+    "knowledge-graph": "knowledge-graph",
+    "knowledge-graph-memory": "knowledge-graph-memori",
+    "knowledge-graph-rag": "knowledge-graph-rag",
+    "kyutai": "kyutai",
+    "labels": "label",
+    "lambda": "lambda",
+    "large": "larg",
+    "large-v3": "large-v3",
+    "ld": "ld",
+    "ledger": "ledger",
+    "librispeech": "librispeech",
+    "limit": "limit",
+    "log": "log",
+    "long": "long",
+    "loop": "loop",
+    "lora": "lora",
+    "lora-adapter": "lora-adapt",
+    "lora-finetuning": "lora-finetun",
+    "maintenance": "mainten",
+    "maintenance-agent": "maintenance-ag",
+    "manual": "manual",
+    "manual-mistranscription-workflow": "manual-mistranscription-workflow",
+    "matches": "match",
+    "matching": "match",
+    "md": "md",
+    "me": "me",
+    "memory": "memori",
+    "merge": "merg",
+    "minilm": "minilm",
+    "mistranscription": "mistranscript",
+    "mistranscription-edge": "mistranscription-edg",
+    "mistranscription-registry": "mistranscription-registri",
+    "mmr": "mmr",
+    "mmr-lambda": "mmr-lambda",
+    "mmr-rerank": "mmr-rerank",
+    "mode": "mode",
+    "nix": "nix",
+    "nix-ld": "nix-ld",
+    "nixos": "nixo",
+    "nltk": "nltk",
+    "node": "node",
+    "normalizer": "normal",
+    "nothing": "noth",
+    "npz": "npz",
+    "npz-atomic-save": "npz-atomic-sav",
+    "of": "of",
+    "operation": "oper",
+    "orphan": "orphan",
+    "orphan-cleanup": "orphan-cleanup",
+    "orphan-guard": "orphan-guard",
+    "pagerank": "pagerank",
+    "patchelf": "patchelf",
+    "pattern": "pattern",
+    "peoples": "peopl",
+    "peoples-speech": "peoples-speech",
+    "per": "per",
+    "per-turn-audit-loop": "per-turn-audit-loop",
+    "persistent": "persist",
+    "persistent-pool": "persistent-pool",
+    "personalized": "person",
+    "personalized-pagerank": "personalized-pagerank",
+    "pi": "pi",
+    "pi-coding-agent": "pi-coding-ag",
+    "pipeline": "pipelin",
+    "pipewire": "pipewir",
+    "plover": "plover",
+    "pocket": "pocket",
+    "pocket-tts": "pocket-tt",
+    "pocket-tts-server": "pocket-tts-serv",
+    "pool": "pool",
+    "porter": "porter",
+    "porter-stemmer": "porter-stemm",
+    "ppr": "ppr",
+    "ppr-retrieval": "ppr-retriev",
+    "progressive": "progress",
+    "progressive-recorder": "progressive-record",
+    "prompt": "prompt",
+    "prompts": "prompt",
+    "pseudo": "pseudo",
+    "pseudo-labels": "pseudo-label",
+    "pw": "pw",
+    "pw-record": "pw-record",
+    "rag": "rag",
+    "rag-watcher": "rag-watch",
+    "ran": "ran",
+    "rate": "rate",
+    "readme": "readm",
+    "record": "record",
+    "recorder": "record",
+    "records": "record",
+    "registry": "registri",
+    "relationships": "relationship",
+    "relevance": "relev",
+    "remove": "remov",
+    "remove-edge-operation": "remove-edge-oper",
+    "replacements": "replac",
+    "replay": "replay",
+    "replay-buffer": "replay-buff",
+    "reports": "report",
+    "rerank": "rerank",
+    "reranking": "rerank",
+    "retrieval": "retriev",
+    "retrieve": "retriev",
+    "retriever": "retriev",
+    "rolling": "roll",
+    "rolling-context": "rolling-context",
+    "rolling-context-store": "rolling-context-stor",
+    "root": "root",
+    "running": "run",
+    "running-context": "running-context",
+    "runs": "run",
+    "save": "save",
+    "searxng": "searxng",
+    "server": "server",
+    "session": "session",
+    "session-agent": "session-ag",
+    "sh": "sh",
+    "signature": "signatur",
+    "silence": "silenc",
+    "silence-alignment": "silence-align",
+    "simon": "simon",
+    "soft": "soft",
+    "soft-timeout": "soft-timeout",
+    "speech": "speech",
+    "stemmer": "stemmer",
+    "stemming": "stem",
+    "store": "store",
+    "store-json": "store-json",
+    "stt": "stt",
+    "stt-text-replacements": "stt-text-replac",
+    "stt-tool": "stt-tool",
+    "suppression": "suppress",
+    "sync": "sync",
+    "systemd": "systemd",
+    "tell": "tell",
+    "term": "term",
+    "term-matching": "term-match",
+    "terms": "term",
+    "terms-per-retrieve": "terms-per-retriev",
+    "text": "text",
+    "the": "the",
+    "thought": "thought",
+    "thought-node": "thought-nod",
+    "timeout": "timeout",
+    "toml": "toml",
+    "too": "too",
+    "tool": "tool",
+    "training": "train",
+    "traversal": "travers",
+    "trigger": "trigger",
+    "triples": "tripl",
+    "ts": "ts",
+    "tts": "tt",
+    "tts-hook": "tts-hook",
+    "tuning": "tune",
+    "turn": "turn",
+    "type": "type",
+    "uks": "uk",
+    "unexpire": "unexpir",
+    "unexpire-operation": "unexpire-oper",
+    "update": "updat",
+    "v3": "v3",
+    "vectors": "vector",
+    "verdict": "verdict",
+    "verdicts": "verdict",
+    "virtualenv": "virtualenv",
+    "voice": "voic",
+    "voice-config-toml": "voice-config-toml",
+    "voice-harness": "voice-har",
+    "voice-training-data": "voice-training-data",
+    "watcher": "watcher",
+    "wayland": "wayland",
+    "what": "what",
+    "whisper": "whisper",
+    "whisper-cpp": "whisper-cpp",
+    "whisper-glossary-biasing": "whisper-glossary-bias",
+    "whisper-lora-finetune": "whisper-lora-finetun",
+    "whisper-server": "whisper-serv",
+    "whisper_finetune": "whisper_finetun",
+    "who": "who",
+    "winkler": "winkler",
+    "with": "with",
+    "with-clause": "with-claus",
+    "wl": "wl",
+    "wl-clipboard": "wl-clipboard",
+    "word": "word",
+    "word-cap": "word-cap",
+    "word-error-rate": "word-error-r",
+    "work": "work",
+    "workflow": "workflow",
+    "workspace": "workspac",
+    "workspace-file-watcher": "workspace-file-watch",
+    "workspace-ingest-pipeline": "workspace-ingest-pipelin",
+    "xyzzy": "xyzzi",
+    "you": "you",
+    "zuhandenheit": "zuhandenheit"
+  }
+}
