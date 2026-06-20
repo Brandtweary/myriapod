@@ -160,8 +160,9 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	letter-spacing: 0.08em;
 	font-size: 0.66rem;
 	font-weight: 600;
-	padding-bottom: 0.35rem;
-	border-bottom: 1px solid var(--border);
+	text-align: center;
+	flex-shrink: 0;
+	padding-bottom: 0.6rem;
 }
 .cw-gutter-empty {
 	color: var(--muted-foreground);
@@ -214,6 +215,34 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	margin-top: 0.2rem;
 	color: var(--muted-foreground);
 	font-style: italic;
+}
+
+/* Provenance split. Personal-graph items keep the green default (the common
+   case). STOCK-graph items are the rare, marked exception: a bright readable
+   violet + serif, grouped below the user's own nodes under a subheading. Violet
+   is the Iris hue — nature almost never makes it, so it reads as "from the docs,
+   not from you." Most users never ask about the KG, so it rarely shows at all. */
+.cw-gutter-sub {
+	margin-top: 0.45rem;
+	color: oklch(74% 0.18 300);
+	font-family: Georgia, "Times New Roman", serif;
+	font-style: italic;
+	font-size: 0.62rem;
+	letter-spacing: 0.04em;
+	opacity: 0.85;
+}
+.cw-term--stock,
+.cw-triple--stock {
+	font-family: Georgia, "Times New Roman", serif;
+}
+.cw-term--stock .cw-term-label {
+	color: oklch(74% 0.18 300);
+}
+.cw-triple--stock {
+	border-left-color: oklch(74% 0.18 300);
+}
+.cw-triple--stock .cw-tri-p {
+	color: oklch(74% 0.18 300);
 }
 
 /* The user-message bubble ships a hardcoded orange gradient that bypasses the

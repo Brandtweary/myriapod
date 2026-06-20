@@ -22,8 +22,8 @@ import "./app.css";
 import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { CYMBIONT_MODEL, CYMBIONT_THINKING_LEVEL } from "./cymbiont-model.js";
-import { OpenRouterKeyTab } from "./settings.js";
+import { CYMBIONT_MODEL, CYMBIONT_THINKING_LEVEL, DEEPSEEK_V4_FLASH } from "./cymbiont-model.js";
+import { MemoryTab, OpenRouterKeyTab } from "./settings.js";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
@@ -33,6 +33,7 @@ import {
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
 import { retrieve } from "./kg/retrieve.js";
+import { makeOpenRouterCompletion, runIngestion } from "./kg/ingest.js";
 import type { StockGraphAsset, TermMatch, Triple } from "./kg/types.js";
 
 // Register custom message renderers
@@ -53,6 +54,11 @@ setTranslations({
 	} as typeof baseTranslations.en,
 });
 
+// Personal knowledge graph persistence (Slice 4): one serialized StockGraphAsset
+// blob in its own IndexedDB store — the user's memory across all conversations.
+const PERSONAL_GRAPH_STORE = "personal-graph";
+const PERSONAL_GRAPH_KEY = "graph";
+
 // Create stores
 const settings = new SettingsStore();
 const providerKeys = new ProviderKeysStore();
@@ -66,12 +72,13 @@ const configs = [
 	providerKeys.getConfig(),
 	customProviders.getConfig(),
 	sessions.getConfig(),
+	{ name: PERSONAL_GRAPH_STORE }, // personal knowledge graph (serialized asset)
 ];
 
 // Create backend
 const backend = new IndexedDBStorageBackend({
 	dbName: "pi-web-ui-example",
-	version: 2, // Incremented for custom-providers store
+	version: 3, // v3: added the personal-graph store
 	stores: configs,
 });
 
@@ -109,6 +116,13 @@ let kgGraph: Graph | undefined;
 // reload may re-inject already-present context (minor token waste, self-corrects
 // as the conversation continues). Acceptable for V1.
 let ledger = new InjectedLedger();
+// Personal/user knowledge graph — mutable, in-page, PPR-only. Grows via per-turn
+// ingestion (agent_end trigger), retrieved alongside the stock graph. Slice 4
+// loads/persists it from IndexedDB; until then it lives for the session.
+let userGraph = Graph.empty();
+// User text of the in-flight turn, stashed by the prompt wrapper for the
+// agent_end ingestion trigger.
+let pendingTurnUserText = "";
 let bodyHost: HTMLDivElement; // flex-row wrapper: [leftGutter, chatPanel, rightGutter]
 let leftGutter: HTMLDivElement; // term matches
 let rightGutter: HTMLDivElement; // triples
@@ -242,6 +256,118 @@ const loadStockGraph = async () => {
 	}
 };
 
+// Fold an ingestion call's tokens + cost into the SESSION total. The framework's
+// stats line sums msg.usage over assistant messages, so attributing ingestion to
+// the latest assistant message makes the displayed total the true session cost
+// (chat + every ingestion the chat triggered) — no override of framework UI.
+function addIngestionCostToSession(promptTokens: number, completionTokens: number): void {
+	const c = DEEPSEEK_V4_FLASH.cost;
+	const inCost = (promptTokens / 1_000_000) * c.input;
+	const outCost = (completionTokens / 1_000_000) * c.output;
+	type Usage = {
+		input: number;
+		output: number;
+		cost?: { input?: number; output?: number; total?: number };
+	};
+	const msgs = agent.state.messages as unknown as Array<{ role: string; usage?: Usage }>;
+	for (let i = msgs.length - 1; i >= 0; i--) {
+		const m = msgs[i];
+		if (m.role === "assistant" && m.usage) {
+			m.usage.input += promptTokens;
+			m.usage.output += completionTokens;
+			if (m.usage.cost) {
+				m.usage.cost.input = (m.usage.cost.input ?? 0) + inCost;
+				m.usage.cost.output = (m.usage.cost.output ?? 0) + outCost;
+				m.usage.cost.total = (m.usage.cost.total ?? 0) + inCost + outCost;
+			}
+			break;
+		}
+	}
+	chatPanel.agentInterface?.requestUpdate?.();
+	dbg(`ingestion cost folded into session: +${promptTokens}in/${completionTokens}out tok, +$${(inCost + outCost).toFixed(6)}`);
+}
+
+// Fire-and-forget per-turn ingestion into the personal graph. Reads the user's
+// own OpenRouter key (Phase 3 is own-key only — a no-op on the hosted free tier
+// until the Phase 4 proxy supplies an ingestion route). Always Flash: cheap
+// structured extraction, independent of the chat model.
+async function triggerIngestion(userText: string, messages: AgentMessage[]): Promise<void> {
+	if (!userText.trim()) return;
+	const apiKey = await providerKeys.get("openrouter");
+	if (!apiKey) {
+		dbg("ingestion skipped: no OpenRouter key (own-key path only in Phase 3)");
+		return;
+	}
+	const turnText = `[USER]:\n${userText}\n\n[ASSISTANT]:\n${lastAssistantText(messages)}`;
+	const completion = makeOpenRouterCompletion({
+		apiKey,
+		model: DEEPSEEK_V4_FLASH.id,
+		onUsage: ({ promptTokens, completionTokens }) =>
+			addIngestionCostToSession(promptTokens, completionTokens),
+	});
+	const stats = await runIngestion(userGraph, turnText, completion);
+	if (stats) {
+		dbg(
+			`ingestion: +${stats.newEntities} new nodes, +${stats.linksAdded} links, ` +
+				`${stats.clausesMerged} clauses merged, ${stats.rejectedOrphan} orphans rejected, ` +
+				`${stats.expirationsApplied} expired (personal graph now ${userGraph.thoughts.size} thoughts)`,
+		);
+		if (stats.entitiesAdded || stats.linksAdded || stats.clausesMerged || stats.expirationsApplied) {
+			await saveUserGraph();
+		}
+	} else {
+		dbg("ingestion: skipped (thin turn) or no parseable output");
+	}
+}
+
+// -- Personal-graph persistence + export/import (Slice 4) -------------------
+
+// One global graph per browser. Loaded at boot, saved after each ingestion.
+async function loadUserGraph(): Promise<void> {
+	try {
+		const asset = await backend.get<StockGraphAsset>(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY);
+		if (asset) {
+			userGraph = new Graph(asset);
+			dbg(`personal graph loaded: ${asset.meta.node_count} nodes, ${asset.meta.edge_count} edges`);
+		}
+	} catch (err) {
+		dbgError("personal graph load failed (starting empty):", err);
+	}
+}
+
+async function saveUserGraph(): Promise<void> {
+	try {
+		await backend.set(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY, userGraph.serialize());
+	} catch (err) {
+		dbgError("personal graph save failed:", err);
+	}
+}
+
+// Export: download the personal graph as JSON (the real durability story —
+// IndexedDB can be evicted and PersistentStorageDialog is broken upstream).
+function downloadPersonalGraph(): void {
+	const blob = new Blob([JSON.stringify(userGraph.serialize(), null, 2)], {
+		type: "application/json",
+	});
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = `cymbiont-personal-graph-${new Date().toISOString().slice(0, 10)}.json`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
+// Import: replace the personal graph from an uploaded export and persist it.
+async function importPersonalGraphFromFile(file: File): Promise<void> {
+	const asset = JSON.parse(await file.text()) as StockGraphAsset;
+	if (!asset || typeof asset !== "object" || typeof asset.thoughts !== "object") {
+		throw new Error("not a Cymbiont personal-graph export");
+	}
+	userGraph = new Graph(asset);
+	await saveUserGraph();
+	dbg(`personal graph imported: ${userGraph.thoughts.size} thoughts`);
+}
+
 // agent.prompt accepts a string or an AgentMessage[]; pull the user's text out.
 const extractUserText = (input: AgentMessage | AgentMessage[] | string): string => {
 	if (typeof input === "string") return input;
@@ -279,22 +405,41 @@ const lastAssistantText = (messages: AgentMessage[]): string => {
 // The gutters: term matches (left) + triples (right). Owned plain DOM we update
 // imperatively from the latest retrieval's VACUUM set (full pre-dedup), so they
 // show what WOULD retrieve this turn even when the injection deduped some out.
+// Provenance split: personal-graph items (the common case) render first in the
+// default green; stock-graph items (the marked exception) group below a
+// subheading in violet + serif. "stock" is the rare case, so it's the one we mark.
+const termCard = (t: TermMatch) => html`<div class="cw-term${t.source === "stock" ? " cw-term--stock" : ""}">
+	<div class="cw-term-label">${t.label}</div>
+	<div class="cw-term-desc">${t.description}</div>
+</div>`;
+const tripleCard = (t: Triple) => html`<div class="cw-triple${t.source === "stock" ? " cw-triple--stock" : ""}">
+	<span class="cw-tri-s">${t.subject}</span>
+	<span class="cw-tri-p">--${t.predicate}--&gt;</span>
+	<span class="cw-tri-o">${t.object}</span>
+	${(t.clauses ?? []).map((c) => html`<div class="cw-clause">[${c.type.toUpperCase()}: ${c.text}]</div>`)}
+</div>`;
+
 const renderGutters = () => {
 	if (!leftGutter || !rightGutter) return;
 	const terms = lastVacuum?.terms ?? [];
 	const triples = lastVacuum?.triples ?? [];
+
+	const userTerms = terms.filter((t) => t.source !== "stock");
+	const stockTerms = terms.filter((t) => t.source === "stock");
+	const userTriples = triples.filter((t) => t.source !== "stock");
+	const stockTriples = triples.filter((t) => t.source === "stock");
+
 	render(
 		html`
+			<div class="cw-gutter-title">Nodes</div>
 			<div class="cw-gutter-inner">
-				<div class="cw-gutter-title">Nodes</div>
 				${
 					terms.length
-						? terms.map(
-								(t) => html`<div class="cw-term">
-									<div class="cw-term-label">${t.label}</div>
-									<div class="cw-term-desc">${t.description}</div>
-								</div>`,
-							)
+						? html`
+								${userTerms.map(termCard)}
+								${stockTerms.length ? html`<div class="cw-gutter-sub">from Cymbiont</div>` : null}
+								${stockTerms.map(termCard)}
+							`
 						: html`<div class="cw-gutter-empty">no matches</div>`
 				}
 			</div>
@@ -303,20 +448,15 @@ const renderGutters = () => {
 	);
 	render(
 		html`
+			<div class="cw-gutter-title">Relationships</div>
 			<div class="cw-gutter-inner">
-				<div class="cw-gutter-title">Relationships</div>
 				${
 					triples.length
-						? triples.map(
-								(t) => html`<div class="cw-triple">
-									<span class="cw-tri-s">${t.subject}</span>
-									<span class="cw-tri-p">--${t.predicate}--&gt;</span>
-									<span class="cw-tri-o">${t.object}</span>
-									${(t.clauses ?? []).map(
-										(c) => html`<div class="cw-clause">[${c.type.toUpperCase()}: ${c.text}]</div>`,
-									)}
-								</div>`,
-							)
+						? html`
+								${userTriples.map(tripleCard)}
+								${stockTriples.length ? html`<div class="cw-gutter-sub">from Cymbiont</div>` : null}
+								${stockTriples.map(tripleCard)}
+							`
 						: html`<div class="cw-gutter-empty">no triples</div>`
 				}
 			</div>
@@ -393,20 +533,36 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		...rest: unknown[]
 	) => {
 		try {
-			if (kgGraph) {
-				const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
-				if (userText.trim()) {
-					const agentText = lastAssistantText(agent.state.messages);
-					const r = retrieve(kgGraph, ledger, userText, agentText);
-					updateGutters(r.vacuum);
-					if (r.injectionBlock) {
-						agent.state.messages = [...agent.state.messages, createKgContextMessage(r.injectionBlock)];
-					}
-					dbg(
-						`kg retrieve: ${r.vacuum.terms.length} terms, ${r.vacuum.triples.length} triples, ` +
-							`seeds=[${r.seeds.join(", ")}], injected=${r.injectionBlock ? "yes" : "no (deduped)"}`,
-					);
+			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
+			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
+			if (userText.trim()) {
+				const agentText = lastAssistantText(agent.state.messages);
+				// Personal graph retrieves FIRST (privileged) so its facts win the
+				// shared-ledger cross-turn dedup; stock retrieves against the same ledger.
+				const userR = retrieve(userGraph, ledger, userText, agentText);
+				const stockR = kgGraph ? retrieve(kgGraph, ledger, userText, agentText) : null;
+				const vacuum = {
+					terms: [
+						...userR.vacuum.terms.map((t) => ({ ...t, source: "user" as const })),
+						...(stockR?.vacuum.terms ?? []).map((t) => ({ ...t, source: "stock" as const })),
+					],
+					triples: [
+						...userR.vacuum.triples.map((t) => ({ ...t, source: "user" as const })),
+						...(stockR?.vacuum.triples ?? []).map((t) => ({ ...t, source: "stock" as const })),
+					],
+				};
+				updateGutters(vacuum);
+				const blocks = [userR.injectionBlock, stockR?.injectionBlock].filter(
+					(b): b is string => !!b,
+				);
+				if (blocks.length) {
+					agent.state.messages = [...agent.state.messages, createKgContextMessage(blocks.join("\n\n"))];
 				}
+				dbg(
+					`kg retrieve: user[${userR.vacuum.terms.length}t/${userR.vacuum.triples.length}r] ` +
+						`stock[${stockR?.vacuum.terms.length ?? 0}t/${stockR?.vacuum.triples.length ?? 0}r] ` +
+						`injected=${blocks.length ? "yes" : "no (deduped)"}`,
+				);
 			}
 		} catch (err) {
 			dbgError("kg retrieval failed (send proceeds without injection):", err);
@@ -486,6 +642,13 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
 				setTimeout(forceChatRepaint, 100);
+				// Fire-and-forget: ingest the just-completed turn into the personal
+				// graph. Newly-minted nodes surface on the next turn's retrieval.
+				const turnUserText = pendingTurnUserText;
+				pendingTurnUserText = "";
+				void triggerIngestion(turnUserText, agent.state.messages).catch((err) =>
+					dbgError("ingestion failed (non-fatal):", err),
+				);
 			}
 
 			// Re-render ONLY the header (its own DOM node) and ONLY when its
@@ -704,7 +867,11 @@ const renderHeader = () => {
 						variant: "ghost",
 						size: "sm",
 						children: icon(Settings, "sm"),
-						onClick: () => SettingsDialog.open([new OpenRouterKeyTab()]),
+						onClick: () =>
+						SettingsDialog.open([
+							new OpenRouterKeyTab(),
+							new MemoryTab({ onExport: downloadPersonalGraph, onImport: importPersonalGraphFromFile }),
+						]),
 						title: "Settings",
 					})}
 				</div>
@@ -760,9 +927,10 @@ async function initApp() {
 	renderGutters(); // initial empty state
 
 	await loadStockGraph();
+	await loadUserGraph();
 
-	// TODO: PersistentStorageDialog is broken upstream — export/import is the
-	// durability story instead.
+	// PersistentStorageDialog is broken upstream — export/import (Memory settings
+	// tab) is the durability story instead.
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const sessionIdFromUrl = urlParams.get("session");

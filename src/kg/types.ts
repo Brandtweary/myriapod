@@ -42,11 +42,17 @@ export interface StockGraphAsset {
 	embeddings: Record<string, number[]>;
 }
 
+// Retrieval provenance — which graph a gutter item came from. Drives the
+// green (user, the common case) vs violet/serif (stock, the marked exception)
+// styling split. Absent on raw retrieve() output; tagged at merge time.
+export type RetrievalSource = "user" | "stock";
+
 // term_match result (left gutter).
 export interface TermMatch {
 	label: string;
 	description: string;
 	hit_count: number;
+	source?: RetrievalSource;
 }
 
 // PPR/MMR result (right gutter). Mirrors server.py's _triple_to_dict.
@@ -57,4 +63,5 @@ export interface Triple {
 	weight: number;
 	hops: number;
 	clauses?: Clause[];
+	source?: RetrievalSource;
 }

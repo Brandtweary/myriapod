@@ -5,8 +5,8 @@
 
 import { NLTK_ENGLISH_STOPWORDS } from "./stopwords";
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
-import { TERM_ALIAS_EDGE_TYPES } from "./config";
-import type { StockGraphAsset, TermMatch, Thought } from "./types";
+import { COMMUTATIVE_TYPES, DESCRIPTION_WORD_CAP, TERM_ALIAS_EDGE_TYPES } from "./config";
+import type { Clause, LinkData, StockGraphAsset, TermMatch, Thought } from "./types";
 
 interface TermEntry {
 	node_id: string;
@@ -17,6 +17,22 @@ const GENERIC_DIRS = new Set(["areas", "commands"]);
 
 function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nowIso(): string {
+	return new Date().toISOString();
+}
+
+/** Mirror of graph.py DescriptionTooLongError — thrown at any write site when a
+ *  node description exceeds the word cap. */
+export class DescriptionTooLongError extends Error {
+	constructor(
+		public readonly label: string,
+		public readonly wordCount: number,
+	) {
+		super(`Description for '${label}' is ${wordCount} words (cap ${DESCRIPTION_WORD_CAP})`);
+		this.name = "DescriptionTooLongError";
+	}
 }
 
 export class Graph {
@@ -67,6 +83,220 @@ export class Graph {
 			this.stemIndex.set(stemmed, set);
 		}
 		set.add(t.id);
+	}
+
+	// -- mutation: CRUD ported from graph.py ------------------------------
+
+	/** Empty mutable graph — the personal/user graph starts here. */
+	static empty(): Graph {
+		return new Graph({
+			meta: { version: 1, node_count: 0, edge_count: 0, last_modified: nowIso() },
+			thoughts: {},
+			embeddings: {},
+		});
+	}
+
+	get(label: string): Thought | null {
+		const id = this.labelIndex.get(label.toLowerCase());
+		return id ? (this.thoughts.get(id) ?? null) : null;
+	}
+
+	private touch(t: Thought): void {
+		t.updated_at = nowIso();
+	}
+
+	private fire(t: Thought): void {
+		t.hit_count = (t.hit_count ?? 0) + 1;
+		t.last_fired = nowIso();
+	}
+
+	private validateDescriptionLength(description: string | null | undefined, label: string): void {
+		if (description == null) return;
+		const words = description.trim().split(/\s+/).filter(Boolean).length;
+		if (words > DESCRIPTION_WORD_CAP) throw new DescriptionTooLongError(label, words);
+	}
+
+	private invalidateTermIndex(): void {
+		this.termIndexValid = false;
+		this.termSingle = new Map();
+		this.termMulti = [];
+	}
+
+	// graph.py get_or_create — label-upsert; on collision only description /
+	// entity_type are updated (never weight). 100-word cap enforced before write.
+	getOrCreate(
+		label: string,
+		weight = 1,
+		description?: string | null,
+		entityType?: string | null,
+	): Thought {
+		const existing = this.get(label);
+		if (existing) {
+			if (description != null && existing.description !== description) {
+				this.validateDescriptionLength(description, label);
+				existing.description = description;
+				this.touch(existing);
+				this.invalidateTermIndex(); // null→value changes term-index membership
+			}
+			if (entityType != null && existing.entity_type !== entityType) {
+				existing.entity_type = entityType;
+				this.touch(existing);
+			}
+			return existing;
+		}
+		this.validateDescriptionLength(description, label);
+		const now = nowIso();
+		const t: Thought = {
+			id: crypto.randomUUID(),
+			label,
+			weight,
+			last_fired: now,
+			description: description ?? null,
+			entity_type: entityType ?? null,
+			links_to: [],
+			links_from: [],
+			link_data: null,
+			hit_count: 0,
+			created_at: now,
+			updated_at: now,
+			metadata: null,
+		};
+		this.thoughts.set(t.id, t);
+		this.labelIndex.set(label.toLowerCase(), t.id);
+		this.indexStem(t);
+		this.invalidateTermIndex();
+		return t;
+	}
+
+	// graph.py _find_link — returns the matching link Thought INCLUDING expired
+	// ones (the add_link reactivation branch depends on this).
+	findLink(fromId: string, linkType: string, toId: string): Thought | null {
+		const src = this.thoughts.get(fromId);
+		if (!src) return null;
+		for (const linkId of src.links_to) {
+			const link = this.thoughts.get(linkId);
+			const ld = link?.link_data;
+			if (ld && ld.from_id === fromId && ld.link_type === linkType && ld.to_id === toId) {
+				return link!;
+			}
+		}
+		return null;
+	}
+
+	hasLink(sourceLabel: string, linkType: string, targetLabel: string): boolean {
+		const source = this.get(sourceLabel);
+		const target = this.get(targetLabel);
+		if (!source || !target) return false;
+		return this.findLink(source.id, linkType, target.id) != null;
+	}
+
+	// graph.py add_link — implicit endpoint creation, reactivate-if-expired /
+	// merge-clauses-by-type on collision, auto-create commutative reverse.
+	addLink(
+		sourceLabel: string,
+		linkType: string,
+		targetLabel: string,
+		weight = 1,
+		clauses?: Clause[] | null,
+		isReverse = false,
+	): Thought | null {
+		const source = this.getOrCreate(sourceLabel);
+		const target = this.getOrCreate(targetLabel);
+		if (source.id === target.id) return null;
+
+		const existing = this.findLink(source.id, linkType, target.id);
+		if (existing && existing.link_data) {
+			if (this.isExpired(existing)) {
+				delete existing.link_data.expired_at;
+				existing.weight = weight;
+				if (clauses) existing.link_data.clauses = clauses;
+				this.touch(existing);
+				this.invalidateTermIndex();
+				if (!isReverse && COMMUTATIVE_TYPES.has(linkType)) {
+					const reverse = this.findLink(target.id, linkType, source.id);
+					if (reverse?.link_data && this.isExpired(reverse)) {
+						delete reverse.link_data.expired_at;
+						reverse.weight = weight;
+						this.touch(reverse);
+					}
+				}
+			} else if (clauses) {
+				let merged = [...(existing.link_data.clauses ?? [])];
+				const existingTypes = new Set(merged.map((c) => c.type));
+				for (const c of clauses) {
+					if (existingTypes.has(c.type)) merged = merged.filter((ec) => ec.type !== c.type);
+					merged.push(c);
+				}
+				existing.link_data.clauses = merged;
+				this.touch(existing);
+			}
+			this.fire(existing);
+			return existing;
+		}
+
+		const now = nowIso();
+		const linkData: LinkData = { from_id: source.id, link_type: linkType, to_id: target.id };
+		if (clauses) linkData.clauses = clauses;
+		const link: Thought = {
+			id: crypto.randomUUID(),
+			label: `${sourceLabel}::${linkType}::${targetLabel}`,
+			weight,
+			last_fired: now,
+			description: null,
+			entity_type: null,
+			links_to: [],
+			links_from: [],
+			link_data: linkData,
+			hit_count: 0,
+			created_at: now,
+			updated_at: now,
+			metadata: null,
+		};
+		this.thoughts.set(link.id, link);
+		source.links_to.push(link.id);
+		target.links_from.push(link.id);
+		this.invalidateTermIndex();
+
+		if (!isReverse && COMMUTATIVE_TYPES.has(linkType)) {
+			this.addLink(targetLabel, linkType, sourceLabel, weight, null, true);
+		}
+		return link;
+	}
+
+	// graph.py expire_link — soft-delete via expired_at + commutative reverse.
+	expireLink(fromId: string, linkType: string, toId: string): Thought | null {
+		const link = this.findLink(fromId, linkType, toId);
+		if (!link?.link_data) return null;
+		if (this.isExpired(link)) return link;
+		link.link_data.expired_at = nowIso();
+		this.touch(link);
+		this.invalidateTermIndex();
+		if (COMMUTATIVE_TYPES.has(linkType)) {
+			const reverse = this.findLink(toId, linkType, fromId);
+			if (reverse?.link_data && !this.isExpired(reverse)) {
+				reverse.link_data.expired_at = nowIso();
+				this.touch(reverse);
+			}
+		}
+		return link;
+	}
+
+	// Serialize to the StockGraphAsset shape for IndexedDB persistence. The user
+	// graph carries no embeddings (PPR-only), so embeddings is always empty.
+	serialize(): StockGraphAsset {
+		const thoughts: Record<string, Thought> = {};
+		let nodeCount = 0;
+		let edgeCount = 0;
+		for (const [id, t] of this.thoughts) {
+			thoughts[id] = t;
+			if (this.isLink(t)) edgeCount++;
+			else nodeCount++;
+		}
+		return {
+			meta: { version: 1, node_count: nodeCount, edge_count: edgeCount, last_modified: nowIso() },
+			thoughts,
+			embeddings: {},
+		};
 	}
 
 	// -- graph.py _build_term_index() -------------------------------------
