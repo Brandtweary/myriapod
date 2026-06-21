@@ -49,3 +49,28 @@ export const CYMBIONT_MODEL = DEEPSEEK_V4_FLASH;
 // rejects). "high" is the right default for ~99% of users and there is no
 // selector — the audience shouldn't have to think about thinking.
 export const CYMBIONT_THINKING_LEVEL = "high" as const;
+
+// --- Owner-funded path: the metering proxy (Phase 4) -----------------------
+// The owner-funded serving paths (anonymous + family) route chat AND ingestion
+// through our proxy instead of calling OpenRouter directly; the own-key path
+// bypasses it entirely. Override the URL at build time via VITE_PROXY_BASE.
+const ENV = import.meta.env as Record<string, string | undefined>;
+export const CYMBIONT_PROXY_BASE = ENV.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1";
+
+// A provider id distinct from "openrouter" so the own-key path's stored
+// OpenRouter key and the proxy's auth token never share a providerKeys slot.
+export const CYMBIONT_PROXY_PROVIDER = "cymbiont";
+
+// The chat model pointed at the proxy. pi-ai auto-detects a non-openrouter.ai
+// baseUrl as plain OpenAI and would emit `reasoning_effort`; we pin
+// thinkingFormat "openrouter" so the forwarded body carries `reasoning: { effort }`
+// — byte-identical to the proven direct path (the proxy passes it through to
+// OpenRouter verbatim). Everything else is inherited from the active model.
+export function proxyChatModel(): Model<"openai-completions"> {
+	return {
+		...CYMBIONT_MODEL,
+		provider: CYMBIONT_PROXY_PROVIDER,
+		baseUrl: CYMBIONT_PROXY_BASE,
+		compat: { thinkingFormat: "openrouter" },
+	};
+}

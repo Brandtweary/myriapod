@@ -256,3 +256,63 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	);
 	border: 1px solid oklch(90% 0.29 142 / 0.35);
 }
+
+/* First-send welcome / grant modal */
+.cw-grant-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 50;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: oklch(0% 0 0 / 0.7);
+	backdrop-filter: blur(2px);
+}
+.cw-grant-modal {
+	max-width: 28rem;
+	margin: 1.5rem;
+	padding: 1.5rem;
+	border: 1px solid oklch(32% 0.05 145);
+	border-radius: 0.75rem;
+	background: oklch(16% 0 0);
+	box-shadow: 0 10px 40px oklch(0% 0 0 / 0.5);
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+.cw-grant-title {
+	font-size: 1.125rem;
+	font-weight: 600;
+	color: oklch(87% 0.26 145);
+}
+.cw-grant-body {
+	font-size: 0.875rem;
+	line-height: 1.5;
+	color: oklch(100% 0 0 / 0.85);
+}
+.cw-grant-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+.cw-grant-primary {
+	padding: 0.5rem 1rem;
+	border-radius: 0.5rem;
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: oklch(0% 0 0);
+	background: oklch(87% 0.26 145);
+}
+.cw-grant-primary:hover {
+	opacity: 0.9;
+}
+.cw-grant-secondary {
+	padding: 0.5rem 1rem;
+	border-radius: 0.5rem;
+	font-size: 0.875rem;
+	color: oklch(87% 0.26 145);
+	border: 1px solid oklch(32% 0.05 145);
+}
+.cw-grant-secondary:hover {
+	opacity: 0.8;
+}

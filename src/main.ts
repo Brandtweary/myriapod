@@ -1,5 +1,5 @@
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
+import type { Model, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
 	ApiKeyPromptDialog,
@@ -22,8 +22,16 @@ import "./app.css";
 import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { CYMBIONT_MODEL, CYMBIONT_THINKING_LEVEL, DEEPSEEK_V4_FLASH } from "./cymbiont-model.js";
-import { MemoryTab, OpenRouterKeyTab } from "./settings.js";
+import {
+	CYMBIONT_MODEL,
+	CYMBIONT_PROXY_BASE,
+	CYMBIONT_PROXY_PROVIDER,
+	CYMBIONT_THINKING_LEVEL,
+	DEEPSEEK_V4_FLASH,
+	proxyChatModel,
+} from "./cymbiont-model.js";
+import { ExportTab, OpenRouterKeyTab } from "./settings.js";
+import { showGrantModal } from "./grant-modal.js";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
@@ -91,6 +99,106 @@ sessions.setBackend(backend);
 // Create and set app storage
 const storage = new AppStorage(settings, providerKeys, sessions, customProviders, backend);
 setAppStorage(storage);
+
+// --- Serving path: own-key vs owner-funded (proxy) -------------------------
+const OPENROUTER_DIRECT_BASE = "https://openrouter.ai/api/v1";
+// providerKeys slot holding a redeemed family token (set by settings redemption).
+const FAMILY_TOKEN_SLOT = "cymbiont-family";
+// The proxy origin (CYMBIONT_PROXY_BASE minus the /v1 suffix) — where /redeem lives.
+const CYMBIONT_PROXY_ORIGIN = CYMBIONT_PROXY_BASE.replace(/\/v1\/?$/, "");
+// localStorage flag: the first-send welcome modal is shown once per browser.
+const WELCOME_FLAG = "cymbiont.welcomeShown";
+
+type ServingPath = {
+	mode: "own" | "family" | "anon";
+	model: Model<"openai-completions">;
+	baseUrl: string; // for the ingestion completion
+	auth: string; // bearer the ingestion completion sends
+};
+
+// The active serving path, (re)resolved on each createAgent.
+let servingPath: ServingPath;
+
+// Decide how this session reaches the model:
+//   own-key → the user's OpenRouter key, calling OpenRouter directly (no proxy)
+//   family  → a redeemed family token, through the proxy
+//   anon    → "anon", through the proxy (IP-metered free tier)
+// For owner-funded paths we pre-populate the proxy provider's key slot so the
+// framework's pre-send check AND getApiKey both resolve it without a key prompt.
+async function resolveServingPath(): Promise<ServingPath> {
+	const ownKey = await providerKeys.get("openrouter");
+	if (ownKey) {
+		return { mode: "own", model: CYMBIONT_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
+	}
+	const familyToken = await providerKeys.get(FAMILY_TOKEN_SLOT);
+	const auth = familyToken && familyToken.length ? familyToken : "anon";
+	await providerKeys.set(CYMBIONT_PROXY_PROVIDER, auth);
+	return {
+		mode: familyToken ? "family" : "anon",
+		model: proxyChatModel(),
+		baseUrl: CYMBIONT_PROXY_BASE,
+		auth,
+	};
+}
+
+// Redeem a family code at the proxy → stores the returned token so the NEXT chat
+// resolves to the family serving path. Used by the Access settings tab.
+async function redeemFamilyCode(code: string): Promise<{ ok: boolean; error?: string }> {
+	try {
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/redeem`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ code }),
+		});
+		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+		if (!res.ok || !data.token) {
+			return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+		}
+		await providerKeys.set(FAMILY_TOKEN_SLOT, data.token);
+		dbg("family code redeemed; token stored (family mode applies on the next new chat)");
+		return { ok: true };
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
+// Fetch the current hosted-credit balance for the Access settings readout. Only
+// meaningful on the owner-funded paths; own-key has no hosted balance to show.
+async function fetchHostedBalance(): Promise<{
+	tier: string;
+	remaining: number;
+	grant: number;
+} | null> {
+	if (servingPath.mode === "own") return null;
+	try {
+		const headers: Record<string, string> = {};
+		if (servingPath.mode === "family") headers.Authorization = `Bearer ${servingPath.auth}`;
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, { headers });
+		if (!res.ok) return null;
+		return (await res.json()) as { tier: string; remaining: number; grant: number };
+	} catch {
+		return null;
+	}
+}
+
+// Open the settings dialog (Access + Export tabs). Shared by the header gear
+// button and the first-send welcome modal's "use my own key" action. Async so the
+// Access tab is constructed with the currently-stored key (editable + clearable).
+const openSettings = async () => {
+	const currentKey = (await providerKeys.get("openrouter")) ?? "";
+	SettingsDialog.open([
+		new OpenRouterKeyTab({
+			currentKey,
+			onSaveKey: async (key: string) => {
+				if (key) await providerKeys.set("openrouter", key);
+				else await providerKeys.delete("openrouter");
+			},
+			onRedeem: redeemFamilyCode,
+			getBalance: fetchHostedBalance,
+		}),
+		new ExportTab({ onExport: downloadPersonalGraph, onImport: importPersonalGraphFromFile }),
+	]);
+};
 
 let currentSessionId: string | undefined;
 let currentTitle = "";
@@ -293,14 +401,13 @@ function addIngestionCostToSession(promptTokens: number, completionTokens: numbe
 // structured extraction, independent of the chat model.
 async function triggerIngestion(userText: string, messages: AgentMessage[]): Promise<void> {
 	if (!userText.trim()) return;
-	const apiKey = await providerKeys.get("openrouter");
-	if (!apiKey) {
-		dbg("ingestion skipped: no OpenRouter key (own-key path only in Phase 3)");
-		return;
-	}
 	const turnText = `[USER]:\n${userText}\n\n[ASSISTANT]:\n${lastAssistantText(messages)}`;
+	// Ingestion rides the SAME serving path as chat: own-key → OpenRouter direct;
+	// owner-funded → the proxy (which meters it against the same principal). Always
+	// Flash: cheap structured extraction, independent of the chat model.
 	const completion = makeOpenRouterCompletion({
-		apiKey,
+		apiKey: servingPath.auth,
+		baseUrl: servingPath.baseUrl,
 		model: DEEPSEEK_V4_FLASH.id,
 		onUsage: ({ promptTokens, completionTokens }) =>
 			addIngestionCostToSession(promptTokens, completionTokens),
@@ -500,19 +607,55 @@ window.addEventListener("resize", () => {
 	resizeTimer = setTimeout(fitTermDescriptions, 150);
 });
 
+// The REPL tool's stock description (pi-web-ui prompts.js) is replaced with this
+// artifact-free version so the model never offers an artifacts/file store or a
+// document-extraction tool it doesn't have. The REPL + reading attachments are
+// the only tools this demo ships.
+const CLEAN_REPL_DESCRIPTION = `# JavaScript REPL
+
+## Purpose
+Execute JavaScript code in a sandboxed browser environment with full Web APIs.
+
+## When to Use
+- Quick calculations or data transformations
+- Testing JavaScript snippets in isolation
+- Processing data with libraries (XLSX, CSV, etc.)
+
+## Environment
+- ES2023+ JavaScript (async/await, optional chaining, nullish coalescing, etc.)
+- All browser APIs: DOM, Canvas, WebGL, Fetch, Web Workers, WebSockets, Crypto, etc.
+- Import any npm package: await import('https://esm.run/package-name')
+
+## Input
+- Read the user's attached files via listAttachments(), readTextAttachment(id), and readBinaryAttachment(id).
+
+## Output
+- console.log(...) output is captured for you to read (the user does not see it). Return a value to surface a result.
+
+## Notes
+- Objects on the global scope do NOT persist between calls.
+- Graphics: use fixed dimensions (e.g. 800x600), not window.innerWidth/Height.
+
+This REPL and reading the user's attachments are your ONLY tools. There is no artifacts system, no persistent file store, and no document-extraction tool — do not offer them.`;
+
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
 	}
 
+	// Decide own-key vs owner-funded BEFORE building the agent — it sets the
+	// model's baseUrl/provider and (for owner-funded) the proxy auth slot.
+	servingPath = await resolveServingPath();
+	const baseState: Partial<AgentState> = initialState ?? {
+		systemPrompt: `You are a helpful AI assistant with access to a JavaScript REPL: execute JavaScript code in a sandboxed browser environment (calculations, data processing, etc.). Use it when it helps you give an accurate, correct answer.`,
+		thinkingLevel: CYMBIONT_THINKING_LEVEL,
+		messages: [],
+		tools: [],
+	};
 	agent = new Agent({
-		initialState: initialState || {
-			systemPrompt: `You are a helpful AI assistant with access to a JavaScript REPL: execute JavaScript code in a sandboxed browser environment (calculations, data processing, etc.). Use it when it helps you give an accurate, correct answer.`,
-			model: CYMBIONT_MODEL,
-			thinkingLevel: CYMBIONT_THINKING_LEVEL,
-			messages: [],
-			tools: [],
-		},
+		// Force the resolved serving-path model (own-key → OpenRouter direct;
+		// owner-funded → the proxy), overriding any model a restored session stored.
+		initialState: { ...baseState, model: servingPath.model },
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
@@ -536,6 +679,13 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
 			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
 			if (userText.trim()) {
+				// First owner-funded send: welcome the visitor once (free credits +
+				// the own-key / family alternatives). Awaits dismissal — this is the
+				// gate the Cap human-check will live behind at public launch.
+				if (servingPath.mode !== "own" && !localStorage.getItem(WELCOME_FLAG)) {
+					localStorage.setItem(WELCOME_FLAG, "1");
+					await showGrantModal({ onOpenSettings: openSettings });
+				}
 				const agentText = lastAssistantText(agent.state.messages);
 				// Personal graph retrieves FIRST (privileged) so its facts win the
 				// shared-ledger cross-turn dedup; stock retrieves against the same ledger.
@@ -664,12 +814,26 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 
 	await chatPanel.setAgent(agent, {
 		onApiKeyRequired: async (provider: string) => {
+			// Owner-funded paths pre-set the proxy provider's key slot, so a prompt
+			// for it would be spurious — accept silently. Only the own-key
+			// (openrouter) path should ever reach a prompt.
+			if (provider === CYMBIONT_PROXY_PROVIDER) return true;
 			return await ApiKeyPromptDialog.prompt(provider);
 		},
 		toolsFactory: (_agent, _agentInterface, _artifactsPanel, runtimeProvidersFactory) => {
-			// Create javascript_repl tool with access to attachments + artifacts
 			const replTool = createJavaScriptReplTool();
 			replTool.runtimeProvidersFactory = runtimeProvidersFactory;
+			// pi-web-ui's stock REPL description advertises an artifacts store
+			// (createOrUpdateArtifact/getArtifact/...) and ChatPanel auto-injects a
+			// separate `artifacts` tool with a 50%-width side panel. This is a chat/
+			// FAQ demo, not an artifacts workbench — override the description so the
+			// model is never told about artifacts (the latent sandbox helpers stay
+			// undocumented and unused). The injected `artifacts` tool itself is
+			// stripped after setAgent below.
+			Object.defineProperty(replTool, "description", {
+				value: CLEAN_REPL_DESCRIPTION,
+				configurable: true,
+			});
 			return [replTool];
 		},
 	});
@@ -680,6 +844,16 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (chatPanel.agentInterface) {
 		chatPanel.agentInterface.enableModelSelector = false;
 		chatPanel.agentInterface.enableThinkingSelector = false;
+	}
+
+	// Strip the `artifacts` tool ChatPanel unconditionally prepends (ChatPanel.js
+	// builds `[artifactsPanel.tool, ...toolsFactory()]`). With no artifacts tool
+	// AND no artifact mention in the REPL description, nothing creates an artifact,
+	// so the side panel never renders — keeping the chat/gutter layout intact.
+	if (agent.state.tools) {
+		agent.state.tools = agent.state.tools.filter(
+			(t) => (t as { name?: string }).name !== "artifacts",
+		);
 	}
 };
 
@@ -867,11 +1041,7 @@ const renderHeader = () => {
 						variant: "ghost",
 						size: "sm",
 						children: icon(Settings, "sm"),
-						onClick: () =>
-						SettingsDialog.open([
-							new OpenRouterKeyTab(),
-							new MemoryTab({ onExport: downloadPersonalGraph, onImport: importPersonalGraphFromFile }),
-						]),
+						onClick: openSettings,
 						title: "Settings",
 					})}
 				</div>
