@@ -32,6 +32,7 @@ import {
 } from "./cymbiont-model.js";
 import { ExportTab, OpenRouterKeyTab } from "./settings.js";
 import { showGrantModal } from "./grant-modal.js";
+import { load as loadBotd } from "@fingerprintjs/botd";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
@@ -104,10 +105,28 @@ setAppStorage(storage);
 const OPENROUTER_DIRECT_BASE = "https://openrouter.ai/api/v1";
 // providerKeys slot holding a redeemed family token (set by settings redemption).
 const FAMILY_TOKEN_SLOT = "cymbiont-family";
+// providerKeys slot holding the anonymous free-tier continuity token (minted at
+// /anon-init). Its presence is also the "welcome already shown" signal — the modal
+// reappears only if the token is gone (cleared storage → a re-mint needs re-gating).
+const ANON_TOKEN_SLOT = "cymbiont-anon";
 // The proxy origin (CYMBIONT_PROXY_BASE minus the /v1 suffix) — where /redeem lives.
 const CYMBIONT_PROXY_ORIGIN = CYMBIONT_PROXY_BASE.replace(/\/v1\/?$/, "");
-// localStorage flag: the first-send welcome modal is shown once per browser.
-const WELCOME_FLAG = "cymbiont.welcomeShown";
+
+// BotD bot-detection verdict, computed once on boot and sent to /anon-init as the
+// invisible bot gate. Fail-OPEN: stays {bot:false} if BotD is blocked or errors, so
+// a real browser whose BotD a privacy extension suppressed isn't punished (the
+// honeypot + time-trap still gate that grant).
+let botdVerdict: { bot: boolean } = { bot: false };
+loadBotd()
+	.then(async (botd) => {
+		await botd.collect();
+		return botd.detect();
+	})
+	.then((r) => {
+		botdVerdict = { bot: r.bot === true };
+		dbg(`botd: bot=${r.bot}`);
+	})
+	.catch((e) => dbgWarn("botd unavailable (fail-open)", e));
 
 type ServingPath = {
 	mode: "own" | "family" | "anon";
@@ -122,7 +141,8 @@ let servingPath: ServingPath;
 // Decide how this session reaches the model:
 //   own-key → the user's OpenRouter key, calling OpenRouter directly (no proxy)
 //   family  → a redeemed family token, through the proxy
-//   anon    → "anon", through the proxy (IP-metered free tier)
+//   anon    → a minted free-tier continuity token (or the "anon" placeholder
+//             until /anon-init grants one), through the proxy
 // For owner-funded paths we pre-populate the proxy provider's key slot so the
 // framework's pre-send check AND getApiKey both resolve it without a key prompt.
 async function resolveServingPath(): Promise<ServingPath> {
@@ -131,14 +151,16 @@ async function resolveServingPath(): Promise<ServingPath> {
 		return { mode: "own", model: CYMBIONT_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
 	}
 	const familyToken = await providerKeys.get(FAMILY_TOKEN_SLOT);
-	const auth = familyToken && familyToken.length ? familyToken : "anon";
+	if (familyToken && familyToken.length) {
+		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, familyToken);
+		return { mode: "family", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth: familyToken };
+	}
+	// Anonymous: use the stored grant token if present; "anon" is the pre-grant
+	// placeholder that triggers the welcome modal + /anon-init mint on first send.
+	const anonToken = await providerKeys.get(ANON_TOKEN_SLOT);
+	const auth = anonToken && anonToken.length ? anonToken : "anon";
 	await providerKeys.set(CYMBIONT_PROXY_PROVIDER, auth);
-	return {
-		mode: familyToken ? "family" : "anon",
-		model: proxyChatModel(),
-		baseUrl: CYMBIONT_PROXY_BASE,
-		auth,
-	};
+	return { mode: "anon", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth };
 }
 
 // Redeem a family code at the proxy → stores the returned token so the NEXT chat
@@ -172,7 +194,11 @@ async function fetchHostedBalance(): Promise<{
 	if (servingPath.mode === "own") return null;
 	try {
 		const headers: Record<string, string> = {};
-		if (servingPath.mode === "family") headers.Authorization = `Bearer ${servingPath.auth}`;
+		// Send the bearer for any authenticated proxy path (family OR a granted anon
+		// token); only the "anon" placeholder has no balance to look up.
+		if (servingPath.auth && servingPath.auth !== "anon") {
+			headers.Authorization = `Bearer ${servingPath.auth}`;
+		}
 		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, { headers });
 		if (!res.ok) return null;
 		return (await res.json()) as { tier: string; remaining: number; grant: number };
@@ -199,6 +225,46 @@ const openSettings = async () => {
 		new ExportTab({ onExport: downloadPersonalGraph, onImport: importPersonalGraphFromFile }),
 	]);
 };
+
+// Mint (or recover) the anonymous free-tier token via /anon-init, carrying the
+// grant gates from the welcome modal + the BotD verdict. Returns the token, or null
+// if the grant was refused (gates failed / daily signups maxed).
+async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): Promise<string | null> {
+	try {
+		const existing = (await providerKeys.get(ANON_TOKEN_SLOT)) ?? "";
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/anon-init`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...(existing ? { Authorization: `Bearer ${existing}` } : {}),
+			},
+			body: JSON.stringify({ ...signals, botd: botdVerdict }),
+		});
+		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+		if (!res.ok || !data.token) {
+			dbg(`anon-init refused: ${data.error ?? `HTTP ${res.status}`}`);
+			return null;
+		}
+		return data.token;
+	} catch (err) {
+		dbgError("anon-init failed", err);
+		return null;
+	}
+}
+
+// On the first anonymous send (no grant token yet) show the welcome modal — which
+// also collects the honeypot + time-trap — then mint the grant and switch the proxy
+// bearer to the real token. Idempotent: once a token exists, this is a no-op.
+async function ensureAnonGrant(): Promise<void> {
+	if (servingPath.mode !== "anon" || servingPath.auth !== "anon") return;
+	const signals = await showGrantModal({ onOpenSettings: openSettings });
+	const token = await initAnonGrant(signals);
+	if (token) {
+		await providerKeys.set(ANON_TOKEN_SLOT, token);
+		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, token);
+		servingPath.auth = token;
+	}
+}
 
 let currentSessionId: string | undefined;
 let currentTitle = "";
@@ -679,13 +745,11 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
 			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
 			if (userText.trim()) {
-				// First owner-funded send: welcome the visitor once (free credits +
-				// the own-key / family alternatives). Awaits dismissal — this is the
-				// gate the Cap human-check will live behind at public launch.
-				if (servingPath.mode !== "own" && !localStorage.getItem(WELCOME_FLAG)) {
-					localStorage.setItem(WELCOME_FLAG, "1");
-					await showGrantModal({ onOpenSettings: openSettings });
-				}
+				// First anonymous send (no grant token yet): welcome the visitor once
+				// (free credits + the own-key / family alternatives), collect the
+				// honeypot + time-trap, and mint the grant token via /anon-init. No-op
+				// once a token exists or on the own-key / family paths.
+				await ensureAnonGrant();
 				const agentText = lastAssistantText(agent.state.messages);
 				// Personal graph retrieves FIRST (privileged) so its facts win the
 				// shared-ledger cross-turn dedup; stock retrieves against the same ledger.

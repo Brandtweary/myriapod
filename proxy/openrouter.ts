@@ -38,16 +38,40 @@ export async function forwardCompletion(opts: {
 	base: string;
 	upstreamKey: string;
 	body: Record<string, unknown>;
+	timeoutMs?: number;
 }): Promise<ForwardResult> {
 	const stream = opts.body.stream === true;
-	const res = await fetch(`${opts.base}/chat/completions`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${opts.upstreamKey}`,
-		},
-		body: JSON.stringify(opts.body),
-	});
+	const started = Date.now();
+	console.log(`[proxy] → openrouter forward (stream=${stream}, timeout=${opts.timeoutMs ?? 120000}ms)`);
+	let res: Response;
+	try {
+		res = await fetch(`${opts.base}/chat/completions`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${opts.upstreamKey}`,
+			},
+			body: JSON.stringify(opts.body),
+			// Fail fast on a dead/stale connection (network change mid-request) rather
+			// than hanging forever. Covers the streamed body too, not just the headers.
+			signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
+		});
+	} catch (err) {
+		const ms = Date.now() - started;
+		const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+		console.error(`[proxy] ✗ openrouter forward failed after ${ms}ms — ${msg}`);
+		return {
+			status: 504,
+			ok: false,
+			stream: false,
+			clientText: JSON.stringify({
+				error: "upstream request failed or timed out — try again (network change?)",
+			}),
+			contentType: "application/json",
+			usage: Promise.resolve(null),
+		};
+	}
+	console.log(`[proxy] ← openrouter status=${res.status} in ${Date.now() - started}ms`);
 
 	if (!res.ok) {
 		return {

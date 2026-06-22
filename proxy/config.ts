@@ -28,6 +28,10 @@ export const config = {
 	// Request limits.
 	maxTokensCap: num("MAX_TOKENS_CAP", 32000),
 	maxInputChars: num("MAX_INPUT_CHARS", 200000),
+	// Hard ceiling on a single upstream (OpenRouter) request, including the streamed
+	// body. Bounds a forward stuck on a dead connection (e.g. the client changed
+	// networks / dropped a VPN mid-stream) so it fails fast instead of hanging.
+	upstreamTimeoutMs: num("UPSTREAM_TIMEOUT_MS", 120000),
 
 	// Wiring.
 	openrouterBase: process.env.OPENROUTER_BASE ?? "https://openrouter.ai/api/v1",

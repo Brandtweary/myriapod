@@ -10,7 +10,6 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@cap.js/server": "^2.0.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {

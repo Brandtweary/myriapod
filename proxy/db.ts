@@ -10,11 +10,11 @@
 
 import { Database } from "bun:sqlite";
 
-export type PrincipalType = "ip" | "token";
+export type PrincipalType = "anon" | "token";
 export type Tier = "free" | "family";
 
 export interface Principal {
-	id: string; // IP address (free) or opaque bearer token (family)
+	id: string; // opaque bearer token (anon free tier, or family)
 	type: PrincipalType;
 	upstream_key: string | null; // family sub-key; null → proxy uses the owner key
 	credit_remaining: number;
@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS family_codes (
   created_at     TEXT NOT NULL,
   redeemed_at    TEXT
 );
+CREATE TABLE IF NOT EXISTS anon_ips (
+  ip           TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL,
+  created_at   TEXT NOT NULL
+);
 `;
 
 export class Db {
@@ -67,6 +72,8 @@ export class Db {
 	private sInsertCode;
 	private sClaimCode;
 	private sReleaseCode;
+	private sAnonForIp;
+	private sBindIp;
 
 	constructor(path: string) {
 		this.db = new Database(path, { create: true });
@@ -78,12 +85,12 @@ export class Db {
 			"SELECT * FROM principals WHERE id = ?",
 		);
 		this.sNewIpsToday = this.db.query<{ n: number }, []>(
-			"SELECT COUNT(*) AS n FROM principals WHERE type = 'ip' AND date(created_at) = date('now')",
+			"SELECT COUNT(*) AS n FROM principals WHERE type = 'anon' AND date(created_at) = date('now')",
 		);
 		this.sFreeSpendToday = this.db.query<{ total: number }, []>(
 			`SELECT COALESCE(SUM(u.cost), 0) AS total
 			 FROM usage_log u JOIN principals p ON p.id = u.principal_id
-			 WHERE p.type = 'ip' AND date(u.ts) = date('now')`,
+			 WHERE p.type = 'anon' AND date(u.ts) = date('now')`,
 		);
 		this.sMonthlySpend = this.db.query<{ total: number }, []>(
 			"SELECT COALESCE(SUM(cost), 0) AS total FROM usage_log WHERE strftime('%Y-%m', ts) = strftime('%Y-%m', 'now')",
@@ -125,10 +132,28 @@ export class Db {
 		this.sReleaseCode = this.db.query<unknown, [string]>(
 			"UPDATE family_codes SET redeemed_token = NULL, redeemed_at = NULL WHERE code = ?",
 		);
+		this.sAnonForIp = this.db.query<Principal, [string]>(
+			`SELECT p.* FROM principals p
+			 JOIN anon_ips a ON a.principal_id = p.id
+			 WHERE a.ip = ?`,
+		);
+		this.sBindIp = this.db.query<unknown, [string, string, string]>(
+			"INSERT OR IGNORE INTO anon_ips (ip, principal_id, created_at) VALUES (?, ?, ?)",
+		);
 	}
 
 	getPrincipal(id: string): Principal | null {
 		return this.sGetPrincipal.get(id) ?? null;
+	}
+
+	/** The anon principal already bound to this IP, if any (one grant per IP). */
+	anonPrincipalForIp(ip: string): Principal | null {
+		return this.sAnonForIp.get(ip) ?? null;
+	}
+
+	/** Bind an IP to an anon principal (first binding wins; later calls no-op). */
+	bindIp(ip: string, principalId: string): void {
+		this.sBindIp.run(ip, principalId, new Date().toISOString());
 	}
 
 	newIpGrantsToday(): number {

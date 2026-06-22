@@ -7,17 +7,24 @@ directory and running it; it shares nothing with the frontend build.
 
 ## What it does
 
-- **`POST /v1/chat/completions`** — OpenAI-compatible. Resolves a principal, checks
-  credit + caps, injects the right upstream key, forwards to OpenRouter, and debits
-  the measured cost (captured from the streamed `usage` chunk).
-  - **Anonymous (free tier):** no `Authorization` → keyed by client IP. First touch
-    grants `$FREE_GRANT_USD` (lifetime), subject to `NEW_IP_PER_DAY` new-grant and
-    `FREE_DAILY_CAP_USD` global-daily caps. Spends the owner key.
-  - **Family:** `Authorization: Bearer <token>` (from `/redeem`). Spends a dedicated
-    OpenRouter sub-key with a hard `$FAMILY_LIMIT` lifetime cap.
+- **`POST /anon-init`** — establishes (or recovers) an anonymous free-tier principal
+  and returns its `{ token }`. The browser calls it once, then uses the token as the
+  proxy bearer. This is the only place a fresh `$FREE_GRANT_USD` is minted and the
+  only place the grant gates run (a client BotD verdict + honeypot + time-trap, all
+  client-reported and thus a casual-automation filter, not a hard wall). A fresh
+  grant needs BOTH a never-seen token AND a never-granted IP: a known token on a new
+  IP keeps its balance (VPN continuity), and a cleared browser on an already-granted
+  IP adopts that IP's principal. New grants are also subject to `NEW_IP_PER_DAY`.
+- **`POST /v1/chat/completions`** — OpenAI-compatible, **spend-only**. Resolves the
+  principal by its bearer token, checks credit + caps, injects the right upstream
+  key, forwards to OpenRouter, and debits the measured cost (from the streamed
+  `usage` chunk). No bearer / unknown token → 401 (call `/anon-init` first).
+  - **Anonymous:** the `/anon-init` token → owner key, bounded by `FREE_DAILY_CAP_USD`
+    (global daily) and the token's `$FREE_GRANT_USD` lifetime balance.
+  - **Family:** the `/redeem` token → a dedicated OpenRouter sub-key with a hard
+    `$FAMILY_LIMIT` lifetime cap.
 - **`POST /redeem`** `{ code }` → provisions a family sub-key and returns `{ token }`.
-- **`GET /health`**.
-- **`/challenge`, `/redeem-challenge`** — only when the Cap bot-challenge is enabled.
+- **`GET /health`**, **`GET /balance`** (bearer → remaining credit).
 
 The **own-key path never reaches this proxy**: when a visitor supplies their own
 OpenRouter key, the browser calls OpenRouter directly.
@@ -52,5 +59,7 @@ Hand the code out; the recipient redeems it in the site's settings, which calls
 ## Deploy (later)
 
 Runs anywhere Bun runs. Today it lives on Adishesha / localhost; public exposure
-(domain → tunnel, Cloudflare, Cap challenge on) is a later phase. To go public:
-set `ALLOWED_ORIGIN` to the site origin and `CHALLENGE_SECRET` to enable Cap.
+(domain → VPS, TLS) is a later phase. To go public, set `ALLOWED_ORIGIN` to the
+site origin. The free tier is gated by the invisible BotD / honeypot / time-trap
+checks at `/anon-init` and bounded by the hard caps (owner-key daily limit +
+per-family sub-key cap).

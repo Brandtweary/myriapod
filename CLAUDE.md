@@ -27,7 +27,8 @@ KG server — a visitor's browser can't reach localhost.
   own `package.json`, deployed standalone. Holds the owner OpenRouter key server-side and meters spend.
 - **Three serving paths**, chosen per-session by `resolveServingPath()` in `main.ts`:
   - **own-key** → browser calls OpenRouter **directly**, proxy bypassed (the user's key, their money).
-  - **anonymous** → proxy injects the owner key, meters a lifetime free balance keyed by IP.
+  - **anonymous** → proxy injects the owner key, meters a free balance against a continuity token minted
+    at `/anon-init` (one $10 per browser, IP-gated).
   - **family** → a redeemed credit code maps to a provisioned OpenRouter sub-key, hard-capped upstream.
 - **Two knowledge graphs**, retrieved together each turn against one shared dedup ledger:
   - **stock** — frozen asset (`public/stock-kg.json`), PPR + MMR over precomputed MiniLM embeddings.
@@ -46,8 +47,8 @@ KG server — a visitor's browser can't reach localhost.
     `compat.thinkingFormat:"openrouter"` so the proxied request body is byte-identical to the direct path.
   - **settings.ts** — `OpenRouterKeyTab` ("Access": own-key field + an unbranded credit-code redemption
     + hosted-balance readout) and `ExportTab` (personal-graph download/import — the real durability story).
-  - **grant-modal.ts** — first-send welcome modal ("$10 free credits" + own-key alternative). The launch
-    seam where the Cap bot-challenge widget mounts when enabled.
+  - **grant-modal.ts** — first-send welcome modal ("$10 free credits" + own-key alternative); also carries
+    the invisible honeypot + time-trap collected when the visitor clicks through to a grant.
   - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm` (maps the hidden
     `kg-context` breadcrumb to a user message for the model).
   - **debug.ts** — `[cymbiont]`-prefixed instrumentation + a wire-level SSE stream tap (dev-only).
@@ -64,9 +65,10 @@ KG server — a visitor's browser can't reach localhost.
     - **stem.ts** — Porter stemmer (opt-in, effectively unused) + always-on `depluralize()`.
     - **config.ts** · **types.ts** · **stopwords.ts** — tunables, shapes, NLTK stopword list.
 - **proxy/** — the metering backend. Self-contained; see **proxy/README.md** for run/deploy.
-  - **server.ts** (Hono routes) · **db.ts** (SQLite: principals / usage_log / family_codes, derived
-    caps) · **openrouter.ts** (forward + `tee()` usage capture + sub-key minting) · **challenge.ts**
-    (Cap PoW, env-gated off) · **config.ts** (env surface) · **mint-code.ts** (`bun run mint-code.ts <CODE>`).
+  - **server.ts** (Hono routes) · **db.ts** (SQLite: principals / usage_log / family_codes / anon_ips,
+    derived caps) · **openrouter.ts** (forward + `tee()` usage capture + sub-key minting) · **anon.ts**
+    (the free-grant gates: BotD verdict + honeypot + time-trap) · **config.ts** (env surface) ·
+    **mint-code.ts** (`bun run mint-code.ts <CODE>`).
 - **scripts/** — dev-time tooling (Python + TS, never shipped).
   - **build-stock-kg.py** — builds `public/stock-kg.json` from `stock-kg/kg/{store.json, *.npz}`.
   - **goldens/** — `gen_python_goldens.py` + `check.ts`: golden-tests the TS port against real Python output.
@@ -91,7 +93,12 @@ KG server — a visitor's browser can't reach localhost.
 - **depluralization** is the one always-on normalization (strips spoken S-plurals so "knowledge
   graphs" hits the singular node) — added here and back-ported to the Python harness. Porter stemming
   is opt-in and used by ~zero live nodes.
-- **Caps** (proxy-enforced unless noted): $10/IP lifetime free · 5 new-IP grants/day · $50/day global
+- **Anonymous grants are token-keyed.** `/anon-init` mints one opaque continuity token per browser
+  carrying a $10 balance; chat is spend-only and resolves that bearer. A fresh grant requires both a
+  never-seen token and a never-granted IP — so a VPN hop keeps its balance, and clearing storage on a
+  granted IP re-adopts the same principal. The mint is gated by an invisible BotD verdict + honeypot +
+  submit time-trap (a casual-automation filter; the hard caps are the real loss floor).
+- **Caps** (proxy-enforced unless noted): $10 per browser (IP-gated) · 5 new grants/day · $50/day global
   free ceiling · **$100 per family sub-key (OpenRouter-enforced)** · $200/mo family aggregate · $300/mo
   overall · 32k `max_tokens`/request. The hard money walls are the owner-key daily limit + the per-family
   sub-key cap, both OpenRouter-enforced; the rest is fairness/backstop. Full detail in `proxy/README.md`.
