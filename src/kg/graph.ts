@@ -1,7 +1,9 @@
-// Browser port of the Cymbiont graph engine — load + indexes + term-match.
+// Browser port of the Cymbiont graph engine — load + indexes + term-match, plus
+// the mutable graph API (getOrCreate / addLink / expireLink / serialize) that the
+// personal/user graph is built on (added Phase 3; the stock graph is read-only).
 // Reference: cymbiont/cymbiont/kg/graph.py (load, _build_term_index, term_match,
-// _index_stem). PPR / MMR / seed extraction live in their own modules and
-// operate on a loaded Graph.
+// _index_stem, and the mutation methods). PPR / MMR / seed extraction live in
+// their own modules and operate on a loaded Graph.
 
 import { NLTK_ENGLISH_STOPWORDS } from "./stopwords";
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
