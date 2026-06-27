@@ -6,6 +6,16 @@
 
 const STYLE = "color:#39ff14;font-weight:bold";
 
+// Saved originals captured at module load. dbg()/the console patch BOTH route
+// through these so a globally-patched console never double-ships its own output.
+const ORIG = {
+	log: console.log.bind(console),
+	info: console.info.bind(console),
+	warn: console.warn.bind(console),
+	error: console.error.bind(console),
+	debug: console.debug.bind(console),
+};
+
 function safe(arg: unknown): string {
 	if (typeof arg === "string") return arg;
 	if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
@@ -29,18 +39,43 @@ function ship(level: string, args: unknown[]): void {
 }
 
 export function dbg(...args: unknown[]): void {
-	console.log("%c[cymbiont]", STYLE, ...args);
+	ORIG.log("%c[cymbiont]", STYLE, ...args);
 	ship("LOG", args);
 }
 
 export function dbgWarn(...args: unknown[]): void {
-	console.warn("%c[cymbiont]", STYLE, ...args);
+	ORIG.warn("%c[cymbiont]", STYLE, ...args);
 	ship("WARN", args);
 }
 
 export function dbgError(...args: unknown[]): void {
-	console.error("%c[cymbiont]", STYLE, ...args);
+	ORIG.error("%c[cymbiont]", STYLE, ...args);
 	ship("ERROR", args);
+}
+
+// Globally patch console so EVERY console.* (our raw calls, cascade.ts, library
+// noise) mirrors to the dev log file — not just the explicit dbg* helpers. Each
+// override calls the saved original (real devtools output) then ships once. Wrapped
+// so a ship failure can never break a real console call. Dev-only.
+let consolePatched = false;
+export function installConsolePatch(): void {
+	if (consolePatched || !import.meta.env?.DEV) return;
+	consolePatched = true;
+	const wrap =
+		(orig: (...a: unknown[]) => void, level: string) =>
+		(...args: unknown[]): void => {
+			orig(...args);
+			try {
+				ship(level, args);
+			} catch {
+				/* never let logging break a console call */
+			}
+		};
+	console.log = wrap(ORIG.log, "LOG");
+	console.info = wrap(ORIG.info, "INFO");
+	console.warn = wrap(ORIG.warn, "WARN");
+	console.error = wrap(ORIG.error, "ERROR");
+	console.debug = wrap(ORIG.debug, "DEBUG");
 }
 
 // Compact summary of an agent message list for logging.
@@ -52,17 +87,15 @@ export function summarizeMessages(messages: Array<{ role?: string }>): string {
 // High-res relative timestamp, rounded ms.
 const ms = () => Math.round(performance.now());
 
-// WIRE-LEVEL STREAM TAP — the no-assumptions diagnostic for the ~13s
-// end-of-stream stall. We wrap global fetch and, for OpenRouter chat-completion
-// calls only, tap the response body's ReadableStream so every raw SSE chunk is
-// timestamped AS IT ARRIVES OFF THE WIRE, flagged for the markers that bound the
-// stall: `finish_reason` (visible answer done), `"usage"` (the trailing
-// usage-only chunk that include_usage:true requests), and `[DONE]` (stream
-// close). If the big gap sits between the finish_reason chunk and the usage/DONE
-// chunk, the provider is holding the connection open after the answer completes
-// (OpenRouter/DeepSeek side, NOT our code or pi-ai). If instead the raw chunks
-// all land fast and the lag is after "body DONE", it's pi-ai/agent-core. This
-// reads timing straight off the network, below pi-ai entirely.
+// WIRE-LEVEL STREAM TAP — a no-assumptions diagnostic for end-of-stream stalls.
+// We wrap global fetch and, for chat-completion calls only, tap the response
+// body's ReadableStream so every raw SSE chunk is timestamped AS IT ARRIVES OFF
+// THE WIRE, flagged for the markers that bound a stall: `finish_reason` (visible
+// answer done), `"usage"` (the trailing usage-only chunk), and `[DONE]` (stream
+// close). A large gap between the finish_reason chunk and the usage/DONE chunk
+// means the server is holding the connection open after the answer completes; if
+// the raw chunks all land fast and the lag is after "body DONE", it's
+// pi-ai/agent-core. This reads timing straight off the network, below pi-ai.
 //
 // Must run before the first chat request. The OpenAI SDK reads global fetch at
 // call time (not import time), and createAgent()/the first send happen well
@@ -73,7 +106,7 @@ export function installStreamTap(): void {
 	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const url =
 			typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-		const isLlm = url?.includes("openrouter.ai") && url?.includes("chat/completions");
+		const isLlm = url?.includes("/v1/chat/completions");
 		if (!isLlm) return origFetch(input, init);
 
 		const id = ++reqSeq;
@@ -142,6 +175,7 @@ export function installStreamTap(): void {
 // Global handlers so nothing fails silently, plus a per-load INIT marker (a
 // fresh INIT after an action you didn't trigger means the page reloaded).
 export function installInstrumentation(): void {
+	installConsolePatch();
 	dbg(`==== INIT @ ${ms()}ms, url=${window.location.href}`);
 	installStreamTap();
 

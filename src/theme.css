@@ -6,8 +6,8 @@
    same palette so the look holds regardless of the theme toggle — the site is
    dark-by-default (html.dark) and there is no light variant by design.
 
-   Neon green is intentional, not dulled to forest green (Brandt's call). Text is
-   white, NOT green — green is for accents, framing, and focus only. */
+   Neon green is intentional, not dulled to forest green. Text is white, NOT green —
+   green is for accents, framing, and focus only. */
 
 :root,
 .dark {
@@ -257,8 +257,8 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	border: 1px solid oklch(90% 0.29 142 / 0.35);
 }
 
-/* First-send welcome / grant modal */
-.cw-grant-overlay {
+/* Generic modal shell (memory-consent modal; reusable) */
+.cw-modal-overlay {
 	position: fixed;
 	inset: 0;
 	z-index: 50;
@@ -268,7 +268,7 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	background: oklch(0% 0 0 / 0.7);
 	backdrop-filter: blur(2px);
 }
-.cw-grant-modal {
+.cw-modal {
 	max-width: 28rem;
 	margin: 1.5rem;
 	padding: 1.5rem;
@@ -280,22 +280,22 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	flex-direction: column;
 	gap: 1rem;
 }
-.cw-grant-title {
+.cw-modal-title {
 	font-size: 1.125rem;
 	font-weight: 600;
 	color: oklch(87% 0.26 145);
 }
-.cw-grant-body {
+.cw-modal-body {
 	font-size: 0.875rem;
 	line-height: 1.5;
 	color: oklch(100% 0 0 / 0.85);
 }
-.cw-grant-actions {
+.cw-modal-actions {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.5rem;
 }
-.cw-grant-primary {
+.cw-modal-primary {
 	padding: 0.5rem 1rem;
 	border-radius: 0.5rem;
 	font-size: 0.875rem;
@@ -303,16 +303,16 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	color: oklch(0% 0 0);
 	background: oklch(87% 0.26 145);
 }
-.cw-grant-primary:hover {
+.cw-modal-primary:hover {
 	opacity: 0.9;
 }
-.cw-grant-secondary {
+.cw-modal-secondary {
 	padding: 0.5rem 1rem;
 	border-radius: 0.5rem;
 	font-size: 0.875rem;
 	color: oklch(87% 0.26 145);
 	border: 1px solid oklch(32% 0.05 145);
 }
-.cw-grant-secondary:hover {
+.cw-modal-secondary:hover {
 	opacity: 0.8;
 }

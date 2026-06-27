@@ -14,19 +14,15 @@ import {
 	COMMUTATIVE_TYPES,
 	MAX_DOC_NODES,
 	MAX_TRIPLES_PER_HEAD,
-	MMR_CANDIDATES,
-	MMR_LAMBDA,
+	PPR_OVERFETCH,
 	TERMS_PER_RETRIEVE,
 	TRIPLES_PER_RETRIEVE,
 } from "./config";
 import { extractSeedLabels } from "./seeds";
-import { mmrRerankTriples } from "./mmr";
 import { queryPpr } from "./ppr";
 import type { Graph } from "./graph";
 import type { InjectedLedger } from "./ledger";
 import type { Clause, TermMatch, Triple } from "./types";
-
-const OVERFETCH = Math.max(MMR_CANDIDATES, TRIPLES_PER_RETRIEVE);
 
 // retriever.py PREDICATE_SHADOWS: relates-to is shadowed by ANY other predicate
 // between the same ordered (subject, object).
@@ -38,7 +34,7 @@ export interface RetrievalResult {
 	seeds: string[];
 }
 
-const tripleKey = (t: Triple) => `${t.subject} --${t.predicate}--> ${t.object}`;
+export const tripleKey = (t: Triple) => `${t.subject} --${t.predicate}--> ${t.object}`;
 
 // retriever.py _dedup_predicate_hierarchy
 function dedupPredicateHierarchy(triples: Triple[]): Triple[] {
@@ -94,8 +90,9 @@ function formatClauses(clauses?: Clause[]): string {
 	return " " + clauses.map((c) => `[${c.type.toUpperCase()}: ${c.text}]`).join(" ");
 }
 
-// retriever.py _assemble
-function assemble(triples: Triple[], terms: TermMatch[]): string | null {
+// retriever.py _assemble. Exported so the voice recency pool renders its contents
+// in the byte-identical <kg-context> format.
+export function assembleKgContext(triples: Triple[], terms: TermMatch[]): string | null {
 	if (!triples.length && !terms.length) return null;
 	const p: string[] = ["<kg-context>"];
 	if (terms.length) {
@@ -115,22 +112,31 @@ function assemble(triples: Triple[], terms: TermMatch[]): string | null {
 	return p.join("\n");
 }
 
-export function retrieve(
-	graph: Graph,
-	ledger: InjectedLedger,
-	userText: string,
-	agentText = "",
-): RetrievalResult {
+export interface Vacuum {
+	terms: TermMatch[];
+	triples: Triple[];
+	seeds: string[];
+}
+
+// The raw per-turn retrieval (pre-ledger-dedup): seeds → PPR → triple
+// post-processing, then term-match + doc cap. This is the "vacuum" — everything
+// that WOULD retrieve this turn. The voice recency pool consumes it directly; the
+// text path wraps it with per-session ledger dedup in retrieve().
+export function retrieveVacuum(graph: Graph, userText: string, agentText = ""): Vacuum {
 	// Seeds: user + agent (preserve order, user first), like server _handle_retrieve.
 	const userSeeds = extractSeedLabels(userText, graph);
 	const agentSeeds = agentText ? extractSeedLabels(agentText, graph) : [];
 	const userSet = new Set(userSeeds);
 	const seeds = [...userSeeds, ...agentSeeds.filter((s) => !userSet.has(s))];
 
-	// PPR overfetch -> MMR rerank -> retriever.py triple post-processing.
-	const ppr = queryPpr(graph, seeds, { topN: OVERFETCH });
-	let triples = mmrRerankTriples(ppr, graph.embeddings, graph.labelIndex, TRIPLES_PER_RETRIEVE, MMR_LAMBDA);
-	triples = capPerHead(dedupPredicateHierarchy(triples), MAX_TRIPLES_PER_HEAD);
+	// PPR overfetch -> retriever.py triple post-processing -> top-N by PPR weight.
+	// (No MMR diversity rerank: the personal graph carries no embeddings, so it was
+	// a no-op; dedup before truncating keeps the strongest survivors.)
+	const ppr = queryPpr(graph, seeds, { topN: PPR_OVERFETCH });
+	const triples = capPerHead(dedupPredicateHierarchy(ppr), MAX_TRIPLES_PER_HEAD).slice(
+		0,
+		TRIPLES_PER_RETRIEVE,
+	);
 
 	// Term match on combined text, then doc-node cap.
 	const combined = agentText ? `${userText}\n${agentText}` : userText;
@@ -138,6 +144,17 @@ export function retrieve(
 	const docMatches = termMatches.filter((m) => m.label.startsWith("doc:"));
 	const nonDoc = termMatches.filter((m) => !m.label.startsWith("doc:"));
 	termMatches = nonDoc.concat(docMatches.slice(0, MAX_DOC_NODES));
+
+	return { terms: termMatches, triples, seeds };
+}
+
+export function retrieve(
+	graph: Graph,
+	ledger: InjectedLedger,
+	userText: string,
+	agentText = "",
+): RetrievalResult {
+	const { terms: termMatches, triples, seeds } = retrieveVacuum(graph, userText, agentText);
 
 	// Vacuum set (pre-ledger-dedup) for the gutters.
 	const vacuum = { terms: termMatches, triples };
@@ -158,5 +175,5 @@ export function retrieve(
 	for (const t of freshTriples) ledger.addTriple(tripleKey(t));
 	for (const m of freshTerms) ledger.addTerm(`desc:${m.label}`);
 
-	return { vacuum, injectionBlock: assemble(freshTriples, freshTerms), seeds };
+	return { vacuum, injectionBlock: assembleKgContext(freshTriples, freshTerms), seeds };
 }

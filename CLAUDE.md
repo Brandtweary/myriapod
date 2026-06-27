@@ -1,107 +1,136 @@
 # Cymbiont Web
 
-A chat-based web demo of [Cymbiont](https://github.com/Brandtweary/cymbiont) — the openable
-resume artifact for a Linux-only harness no hiring manager will ever clone. Two faces, one app:
-an **FAQ bot** answering questions about Cymbiont from a frozen "stock" knowledge graph, and a
-**lightweight KG-memory assistant** whose personal graph grows as you talk. The whole point is to
-make retrieval *visible* — every turn shows the matched nodes and triples in gutters beside the chat.
+A browser-local **voice agent demo** of [Cymbiont](https://github.com/Brandtweary/cymbiont) — the public, openable artifact for a Linux-only
+harness no hiring manager will ever clone. The thesis:
+sovereign, browser-local AI memory running over an **open, self-hostable inference stack**. You talk
+to it (or type), it answers, and a personal knowledge graph grows in your own browser from the
+conversation — every turn shows the matched nodes and triples in gutters beside the chat, so the
+memory layer is on screen rather than hidden behind the generation.
+
+The inference is a streaming voice cascade (STT → open-weight LLM → TTS, the
+[Kyutai Unmute](https://github.com/kyutai-labs/unmute) project) plus an OpenAI-compatible LLM server.
+This repo is the **hosted demo** of that; the "run it yourself" story points people at the open
+upstream components rather than shipping a backend here.
 
 It is a *publishing* project, not a port: the harness already works, this re-renders a known-good
 system for a reachable audience. Motto: **maximal reuse** — writing logic from scratch (outside the
-new UI) is a red flag. The live plan, all design decisions, and phase status live in the gitignored
+new UI) is a red flag. The live plan, design decisions, and phase status live in the gitignored
 `feature_taskpad_cymbiont_web.md`.
 
 **PUBLISHED REPO — treat every committed byte as public** (GitHub private, the live site public;
 posture is public regardless). No live knowledge-graph node labels, no personal/workspace terms, no
-real paths in docs/comments/prompts. Bias hard against examples; genericize any that are truly needed.
-Canonical rule in Cymbiont's `CLAUDE.local.md` (this repo has the defensive `.gitignore` entry, no file).
+real hostnames, IPs, or paths in docs/comments/prompts. Bias hard against examples; genericize any
+that are truly needed. Describe the self-hosted inference stack generically (a self-hosted vLLM-style
+OpenAI-compatible endpoint, the Unmute cascade, an open-weight model) — never tie it to private infra.
 
 ## Architecture
 
-Everything runs **browser-local** except a single backend. There is no Python at runtime and no
-KG server — a visitor's browser can't reach localhost.
+**Everything runs browser-local. There is no backend in this repo** — no Python at runtime, no KG
+server, no metering proxy. The browser speaks directly to a self-hosted inference stack over two
+endpoints (both configurable, both on one origin in production behind TLS):
+
+- **The voice cascade** — a WebSocket to the Kyutai Unmute stack, spoken in the OpenAI Realtime
+  dialect (WS path `/api/v1/realtime`, subprotocol `realtime`). STT → open-weight LLM → TTS all run
+  server-side; server-side VAD segments turns. Configured via `VITE_CASCADE_URL`.
+- **The LLM endpoint** — a self-hosted OpenAI-compatible server (vLLM-style) at the `/llm/v1` path,
+  serving a single open-weight model. Used by **typed chat** (text in, streamed text out, no TTS) and
+  by **personal-graph ingestion**. Configured via `VITE_LLM_BASE`.
+
+Typed chat bypasses the cascade because Unmute's WebSocket rejects typed input — so the typed path
+hits the LLM endpoint directly while the voice path goes through the full cascade.
 
 - **Frontend** — TypeScript fork of the `@earendil-works/pi-web-ui` example app (Lit 3 + mini-lit +
   Tailwind v4, Vite, static SPA). Retrieval, the personal graph, and ingestion all run in-page.
-- **One backend** — the metering inference proxy in `proxy/` (Bun + Hono + `bun:sqlite`), with its
-  own `package.json`, deployed standalone. Holds the owner OpenRouter key server-side and meters spend.
-- **Three serving paths**, chosen per-session by `resolveServingPath()` in `main.ts`:
-  - **own-key** → browser calls OpenRouter **directly**, proxy bypassed (the user's key, their money).
-  - **anonymous** → proxy injects the owner key, meters a free balance against a continuity token minted
-    at `/anon-init` (one $10 per browser, IP-gated).
-  - **family** → a redeemed credit code maps to a provisioned OpenRouter sub-key, hard-capped upstream.
-- **Two knowledge graphs**, retrieved together each turn against one shared dedup ledger:
-  - **stock** — frozen asset (`public/stock-kg.json`), PPR + MMR over precomputed MiniLM embeddings.
-  - **personal** — mutable, per-browser, persisted to IndexedDB, **PPR-only** (no embeddings/MMR).
-- **The Python `cymbiont/kg/` package is REFERENCE-ONLY** — `src/kg/` is a faithful port of it,
-  golden-tested against the original, but nothing calls Python at runtime.
+- **One hardcoded model** — a single local provider (`src/cymbiont-model.ts`), reasoning off, zero
+  cost (local inference has no per-token price). No model picker, no thinking-level selector.
+- **One knowledge graph** — the personal graph: mutable, per-browser, persisted to IndexedDB,
+  **PPR-only** (no embeddings, no MMR — both removed). It starts empty and grows via per-turn
+  ingestion. Personal-graph writes are **opt-in** (a one-time consent gate).
+- **The Python `cymbiont/kg/` package is REFERENCE-ONLY** — `src/kg/` is a faithful TypeScript port
+  of it, but nothing calls Python at runtime.
 
 ## Repo Layout
 
 - **src/** — the frontend.
-  - **main.ts** — app entry + the heart. Serving-path resolver, agent construction, the retrieval
-    injection wiring (Design 2, below), the lifecycle listener (persistence, repaint, ingestion
-    trigger), gutter rendering, personal-graph load/save, session management.
-  - **cymbiont-model.ts** — hardcoded chat-model literals (a cheap dev variant + a prod variant — swap
-    the export; no picker UI), reasoning level pinned `high`, and `proxyChatModel()` which pins
-    `compat.thinkingFormat:"openrouter"` so the proxied request body is byte-identical to the direct path.
-  - **settings.ts** — `OpenRouterKeyTab` ("Access": own-key field + an unbranded credit-code redemption
-    + hosted-balance readout) and `ExportTab` (personal-graph download/import — the real durability story).
-  - **grant-modal.ts** — first-send welcome modal ("$10 free credits" + own-key alternative); also carries
-    the invisible honeypot + time-trap collected when the visitor clicks through to a grant.
+  - **main.ts** — app entry + the heart. Agent construction, the Design-2 retrieval injection wiring,
+    the lifecycle listener (persistence, repaint, ingestion scheduling), gutter rendering, the voice
+    cascade wiring (transcript → message list, KG hooks, the recency pool), personal-graph load/save,
+    memory-consent state, and session management.
+  - **cascade.ts** — `CascadeSession`: the WebSocket client for the Unmute voice cascade. opus-recorder
+    mic capture → `input_audio_buffer.append`; `response.audio.delta` Opus packets → decode →
+    AudioWorklet playback. Surfaces user + assistant transcript deltas and the VAD `speech_stopped`
+    signal via callbacks. `updateInstructions()` is the seam the KG layer uses to (re)inject context.
+  - **cymbiont-model.ts** — the single hardcoded chat model: provider id `cymbiont`, `baseUrl` from
+    `VITE_LLM_BASE`, reasoning off, zero cost. A throwaway bearer is seeded into the provider key slot
+    so pi-web-ui's pre-send key check passes (the local server ignores it).
+  - **voice.ts** — the mic button + toggle state machine (`Ctrl+/` shortcut), browser mic-permission
+    flow, and the recording indicator. Transport-agnostic: the actual audio transport plugs into the
+    `onStart(stream) / onStop()` seam (wired to the cascade in main.ts). Toggle interaction, not
+    push-to-talk: one press records, the next ends the turn.
+  - **memory-button.ts** — the memory-indicator button beside the mic. Reflects ingestion state
+    (off / idle / armed / running); clicking force-flushes the queued ingestion (or offers the
+    consent opt-in when off).
+  - **consent-modal.ts** — the one-time memory opt-in modal, shown on the first interaction (first
+    send OR first mic toggle). The choice persists per browser and is changeable in Settings → Memory.
+  - **settings.ts** — `MemoryTab` (consent on/off toggle) and `ExportTab` (personal-graph
+    download/import — the real durability story, since IndexedDB can be evicted). No key/credit tab.
   - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm` (maps the hidden
     `kg-context` breadcrumb to a user message for the model).
-  - **debug.ts** — `[cymbiont]`-prefixed instrumentation + a wire-level SSE stream tap (dev-only).
-  - **theme.css** / **app.css** — Golgari palette (black / white text / neon-green) over pi-web-ui's tokens.
+  - **debug.ts** — `[cymbiont]`-prefixed instrumentation (dev-only; posts to the Vite `/__log` route).
+  - **theme.css** / **app.css** — a black / white-text / neon-green palette over pi-web-ui's tokens.
   - **kg/** — the TS retrieval + ingestion port (each module headers its Python source):
-    - **graph.ts** — `Graph`: load + label/stem/term indexes + `termMatch`, plus the mutable user-graph
-      API (`getOrCreate` / `addLink` / `expireLink` / `serialize`).
-    - **seeds.ts** · **ppr.ts** · **mmr.ts** — seed extraction, networkx-faithful PageRank, MMR diversity rerank.
-    - **retrieve.ts** — orchestration: seeds → PPR overfetch → MMR → predicate-shadow dedup → per-head
-      cap → term-match → doc cap → ledger dedup → `<kg-context>` assembly. Returns the vacuum set + injection block.
+    - **graph.ts** — `Graph`: load + label/stem/term indexes + `termMatch`, plus the mutable
+      personal-graph API (`getOrCreate` / `addLink` / `expireLink` / `serialize`) and
+      `DescriptionTooLongError`.
+    - **seeds.ts** · **ppr.ts** — seed extraction and networkx-faithful PageRank. (No `mmr.ts` — MMR
+      was a no-op without embeddings and was removed.)
+    - **retrieve.ts** — `retrieveVacuum()` runs seeds → PPR overfetch → predicate-shadow dedup →
+      per-head cap → top-N → term-match → doc cap, returning the **vacuum** set. `retrieve()` wraps it
+      with per-session ledger dedup and assembles the `<kg-context>` injection block. `assembleKgContext`
+      is shared so the voice pool renders the identical format.
+    - **retrieval-pool.ts** — `RetrievalPool`: the voice working-memory layer. Decaying recency set,
+      hit-count TTL, capped, re-rendered whole each VAD turn.
     - **ingest.ts** · **extraction-prompts.ts** — per-turn personal-graph ingestion (LLM extraction →
-      tolerant parse → upsert-by-label + orphan-drop + clause merge + expirations).
-    - **ledger.ts** — `InjectedLedger`: per-session dedup (the vacuum/injection split, below).
+      tolerant parse → upsert-by-label + orphan-drop + clause merge + expirations). `makeCompletion`
+      is an endpoint-agnostic OpenAI-compatible completion seam.
+    - **ledger.ts** — `InjectedLedger`: per-session dedup for the text path (the vacuum/injection split).
     - **stem.ts** — Porter stemmer (opt-in, effectively unused) + always-on `depluralize()`.
     - **config.ts** · **types.ts** · **stopwords.ts** — tunables, shapes, NLTK stopword list.
-- **proxy/** — the metering backend. Self-contained; see **proxy/README.md** for run/deploy.
-  - **server.ts** (Hono routes) · **db.ts** (SQLite: principals / usage_log / family_codes / anon_ips,
-    derived caps) · **openrouter.ts** (forward + `tee()` usage capture + sub-key minting) · **anon.ts**
-    (the free-grant gates: BotD verdict + honeypot + time-trap) · **config.ts** (env surface) ·
-    **mint-code.ts** (`bun run mint-code.ts <CODE>`).
-- **scripts/** — dev-time tooling (Python + TS, never shipped).
-  - **build-stock-kg.py** — builds `public/stock-kg.json` from `stock-kg/kg/{store.json, *.npz}`.
-  - **goldens/** — `gen_python_goldens.py` + `check.ts`: golden-tests the TS port against real Python output.
-  - **test-graph-mutation.ts** · **test-ingest.ts** — unit tests for the graph API and ingestion.
-- **stock-kg/kg/** — the frozen graph source (`store.json` + MiniLM `node_embeddings_minilm.npz`),
-  built from Cymbiont's own docs; mirrors the harness's `DATA_ROOT/kg/` layout.
-- **public/stock-kg.json** — the built browser asset (thoughts + label embeddings), fetched at boot.
-- **vite.config.ts** — Tailwind, a dev `/__log` middleware (writes `debug.ts` output to a tmp log), and
-  a **build-only** CSP injector (`script-src 'self'`; `connect-src` scoped to OpenRouter + the proxy).
+- **scripts/** — dev-time tooling (TS, never shipped): **test-graph-mutation.ts** and
+  **test-ingest.ts** — unit tests for the graph API and ingestion.
+- **public/** — static assets fetched at runtime: the Opus codec workers + WASM and the audio output
+  worklet (`encoderWorker.min.js`, `decoderWorker.min.js` + `.wasm`, `audio-output-processor.js`),
+  ported from Unmute's own frontend so the wire format matches.
+- **vite.config.ts** — Tailwind, a dev `/__log` middleware (writes `debug.ts` output to a tmp log),
+  and a **build-only** CSP injector (`script-src 'self'`; `connect-src` scoped to self + the LLM
+  endpoint origin + its WebSocket, derived from `VITE_LLM_BASE`).
 - **index.html** · **tsconfig.json** · **package.json** — SPA scaffold, TS config, pinned deps.
 
 ## How it works (the non-obvious parts)
 
-- **Design-2 retrieval injection.** Per turn, a wrapper around `agent.prompt()` runs retrieval over
-  both graphs *before* the context snapshot, updates the gutters with the full **vacuum** set, and
-  appends a hidden `kg-context` breadcrumb to `agent.state.messages` that accumulates across turns
-  (like Claude Code's `additionalContext`). The ledger deduplicates injection; the gutters
-  deliberately show the pre-dedup vacuum (the "small lie" — what *would* retrieve this turn).
-- **Per-turn ingestion** fires fire-and-forget on `agent_end` into the personal graph, via a cheap
-  fixed model on the active serving path, with a thin-turn guard (skips "ok"/"thanks"-class turns).
-  Cost is folded into the latest assistant message's usage so the stats line totals chat + ingestion.
+- **Two retrieval paths, one engine.** Both consume `retrieveVacuum()` over the personal graph, but
+  inject differently because the two transports persist context differently:
+  - **Text (Design 2).** A wrapper around `agent.prompt()` runs retrieval *before* the run's context
+    snapshot, updates the gutters with the full **vacuum** set, and appends a hidden `kg-context`
+    breadcrumb to `agent.state.messages`. The breadcrumb accumulates across turns (like Claude Code's
+    `additionalContext`), so a per-session **ledger** dedup is correct rather than lossy. The gutters
+    deliberately show the pre-dedup vacuum (the "small lie" — what *would* retrieve this turn).
+  - **Voice (recency pool).** Unmute's `updateInstructions` REPLACES the system prompt every VAD turn,
+    so anything not re-asserted vanishes. The voice path therefore keeps a decaying **recency pool**
+    (`retrieval-pool.ts`) and re-injects the whole pool each turn. Entries decay by a hit-count TTL
+    (recurring concepts persist, one-offs fade); caps are 12 terms / 15 triples. The gutters mirror
+    the pool, not just this turn's hits.
+- **Injection verification.** `cascade.ts` logs the `response.created` event's `chat_history[0]` (the
+  system prompt the server is about to send the LLM) and reports whether the injected `<kg-context>`
+  block is present — the injection is otherwise invisible.
+- **Opt-in memory.** Nothing is ingested until the visitor grants consent. The modal fires once on the
+  first interaction; the choice persists in IndexedDB and is toggleable in Settings → Memory.
+- **Debounced, batched, serialized ingestion.** Ingestion does NOT fire per turn. Exchanges accumulate
+  and flush as one extraction once the conversation has been quiet for ~15s (a VAD pause between turns
+  is not the end; sustained silence is). The memory button force-flushes immediately. Two extractions
+  never run at once — a flush that lands mid-run is honored when the current one finishes.
 - **depluralization** is the one always-on normalization (strips spoken S-plurals so "knowledge
-  graphs" hits the singular node) — added here and back-ported to the Python harness. Porter stemming
-  is opt-in and used by ~zero live nodes.
-- **Anonymous grants are token-keyed.** `/anon-init` mints one opaque continuity token per browser
-  carrying a $10 balance; chat is spend-only and resolves that bearer. A fresh grant requires both a
-  never-seen token and a never-granted IP — so a VPN hop keeps its balance, and clearing storage on a
-  granted IP re-adopts the same principal. The mint is gated by an invisible BotD verdict + honeypot +
-  submit time-trap (a casual-automation filter; the hard caps are the real loss floor).
-- **Caps** (proxy-enforced unless noted): $10 per browser (IP-gated) · 5 new grants/day · $50/day global
-  free ceiling · **$100 per family sub-key (OpenRouter-enforced)** · $200/mo family aggregate · $300/mo
-  overall · 32k `max_tokens`/request. The hard money walls are the owner-key daily limit + the per-family
-  sub-key cap, both OpenRouter-enforced; the rest is fairness/backstop. Full detail in `proxy/README.md`.
+  graphs" hits the singular node). Porter stemming is opt-in and effectively unused.
 
 ## pi-web-ui workarounds (why the frontend looks weird)
 
@@ -110,7 +139,8 @@ The bundled example app is broken in all published versions; these are load-bear
 - **Vanishing messages** — pi-agent-core mutates `state.messages` in place, so `<message-list>`
   (identity-only reactivity) never re-renders. `forceChatRepaint()` reassigns a fresh array on
   `message_end`/`agent_end`. (The example also listens for a phantom `state-update` event that never
-  fires — we bind to the raw lifecycle events instead.)
+  fires — we bind to the raw lifecycle events instead.) The voice path applies the same fix: each
+  transcript delta replaces the last message with a fresh object identity, not an in-place mutation.
 - **Mount-once ChatPanel** — the panel is self-sufficient; mount it once outside the reactive render
   root and never re-render it (re-committing it mid-turn wiped the stream). Toggle visibility only.
 - **Artifacts stripped** — `ChatPanel` hardwires an `artifacts` tool + side panel regardless of
@@ -121,12 +151,16 @@ The bundled example app is broken in all published versions; these are load-bear
 
 ## Conventions & commands
 
-- **Frontend:** `npm run dev` (Vite + HMR), `npm run build` (prod + CSP), `npm run check` (`tsc --noEmit`).
-- **Proxy:** `bun install && bun start` in `proxy/` (port 8790). `.env` is gitignored; Bun auto-loads it.
-- **Golden tests:** `python3 scripts/goldens/gen_python_goldens.py` then `npx tsx scripts/goldens/check.ts`
-  — hard-gates term-match + PPR fidelity against the Python harness. Run after any `src/kg/` change.
+- **Commands:** `npm run dev` (Vite + HMR), `npm run build` (prod build + strict CSP), `npm run check`
+  (`tsc --noEmit`). Dev tests: `npx tsx scripts/test-graph-mutation.ts` and
+  `npx tsx scripts/test-ingest.ts` — run after any `src/kg/` change.
+- **Endpoints are env-configured.** `VITE_LLM_BASE` (the OpenAI-compatible LLM, `/llm/v1`) and
+  `VITE_CASCADE_URL` (the Unmute realtime WebSocket) default to a local/dev target and are overridden
+  at build time for deploy. The build-only CSP's `connect-src` is derived from `VITE_LLM_BASE`.
 - **Versions are pinned** — the whole `@earendil-works/*` suite is locked at 0.75.3 (an `overrides`
-  block forces it); upgrading emits the identical broken event set, so it fixes nothing. The chat model
-  is hand-built because it's absent from that version's frozen registry.
-- **Rebuilding the stock graph** is a Cymbiont-side operation (serial `workspace_ingest` over the
-  package docs → `store.json` + npz → `build-stock-kg.py`), not a frontend concern.
+  block forces it); upgrading emits the identical broken event set, so it fixes nothing. The chat
+  model is hand-built because it's absent from that version's frozen registry.
+- **Single model, no cost.** The model and reasoning level are hardcoded; the model picker and
+  thinking-level selector are hidden. Cost is zeroed so the stats line reads $0 (local inference).
+</content>
+</invoke>

@@ -115,7 +115,6 @@ const edgeCount = (g: Graph) => [...g.thoughts.values()].filter((t) => !!t.link_
 	g.addLink("alpha", "relates-to", "beta");
 	const asset = g.serialize();
 	check("serialize node/edge counts", asset.meta.node_count === 2 && asset.meta.edge_count === 2);
-	check("serialize carries no embeddings", Object.keys(asset.embeddings).length === 0);
 
 	const g2 = new Graph(asset);
 	check("round-trip description", g2.get("alpha")?.description === "First node.");

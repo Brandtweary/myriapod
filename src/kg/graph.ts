@@ -1,14 +1,14 @@
 // Browser port of the Cymbiont graph engine — load + indexes + term-match, plus
 // the mutable graph API (getOrCreate / addLink / expireLink / serialize) that the
-// personal/user graph is built on (added Phase 3; the stock graph is read-only).
+// personal/user graph is built on.
 // Reference: cymbiont/cymbiont/kg/graph.py (load, _build_term_index, term_match,
-// _index_stem, and the mutation methods). PPR / MMR / seed extraction live in
-// their own modules and operate on a loaded Graph.
+// _index_stem, and the mutation methods). PPR / seed extraction live in their own
+// modules and operate on a loaded Graph.
 
 import { NLTK_ENGLISH_STOPWORDS } from "./stopwords";
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
 import { COMMUTATIVE_TYPES, DESCRIPTION_WORD_CAP, TERM_ALIAS_EDGE_TYPES } from "./config";
-import type { Clause, LinkData, StockGraphAsset, TermMatch, Thought } from "./types";
+import type { Clause, GraphAsset, LinkData, TermMatch, Thought } from "./types";
 
 interface TermEntry {
 	node_id: string;
@@ -39,7 +39,6 @@ export class DescriptionTooLongError extends Error {
 
 export class Graph {
 	thoughts: Map<string, Thought> = new Map();
-	embeddings: Map<string, number[]> = new Map();
 
 	// lowercase label -> id (nodes only)
 	labelIndex: Map<string, string> = new Map();
@@ -51,21 +50,18 @@ export class Graph {
 	private termMulti: Array<[string, TermEntry]> = [];
 	private termIndexValid = false;
 
-	constructor(asset: StockGraphAsset) {
+	constructor(asset: GraphAsset) {
 		this.load(asset);
 	}
 
 	// -- graph.py load() --------------------------------------------------
-	private load(asset: StockGraphAsset): void {
+	private load(asset: GraphAsset): void {
 		for (const [id, t] of Object.entries(asset.thoughts)) {
 			this.thoughts.set(id, t);
 			if (!this.isLink(t)) {
 				this.labelIndex.set(t.label.toLowerCase(), t.id);
 				this.indexStem(t);
 			}
-		}
-		for (const [id, vec] of Object.entries(asset.embeddings)) {
-			this.embeddings.set(id, vec);
 		}
 	}
 
@@ -94,7 +90,6 @@ export class Graph {
 		return new Graph({
 			meta: { version: 1, node_count: 0, edge_count: 0, last_modified: nowIso() },
 			thoughts: {},
-			embeddings: {},
 		});
 	}
 
@@ -283,9 +278,8 @@ export class Graph {
 		return link;
 	}
 
-	// Serialize to the StockGraphAsset shape for IndexedDB persistence. The user
-	// graph carries no embeddings (PPR-only), so embeddings is always empty.
-	serialize(): StockGraphAsset {
+	// Serialize to the GraphAsset shape for IndexedDB persistence.
+	serialize(): GraphAsset {
 		const thoughts: Record<string, Thought> = {};
 		let nodeCount = 0;
 		let edgeCount = 0;
@@ -297,7 +291,6 @@ export class Graph {
 		return {
 			meta: { version: 1, node_count: nodeCount, edge_count: edgeCount, last_modified: nowIso() },
 			thoughts,
-			embeddings: {},
 		};
 	}
 

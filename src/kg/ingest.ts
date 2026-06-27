@@ -3,8 +3,9 @@
 //
 // Flow per turn: dump the personal graph as existing-context → build the prompt →
 // one LLM completion → tolerant brace-bracket parse → apply mutations to the
-// in-page user Graph. No backend: the completion rides the own-key OpenRouter
-// path (Phase 4 can repoint `baseUrl`/auth without touching this logic).
+// in-page user Graph. The completion hits the same self-hosted OpenAI-compatible
+// endpoint as typed chat (see cymbiont-model.ts); `makeCompletion` is endpoint-
+// agnostic, so a deploy can repoint `baseUrl` without touching this logic.
 
 import { DescriptionTooLongError, Graph } from "./graph";
 import { buildIngestMessages } from "./extraction-prompts";
@@ -20,33 +21,30 @@ export interface ChatMessage {
 }
 export type CompletionFn = (messages: ChatMessage[]) => Promise<string>;
 
-export interface OpenRouterCompletionOpts {
-	apiKey: string;
+export interface CompletionOpts {
+	baseUrl: string; // OpenAI-compatible base, e.g. http://.../llm/v1
 	model: string;
-	baseUrl?: string; // default https://openrouter.ai/api/v1; Phase 4 → proxy
-	// Reports the call's token usage so the caller can fold ingestion cost into
-	// the session total (the chat stats line otherwise omits it).
+	apiKey?: string; // optional bearer; the local server ignores it
+	// Reports the call's token usage if the caller wants it (unused locally — there
+	// is no per-token cost to fold into the session total).
 	onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void;
 }
 
 /** Build a one-shot, non-streaming completion against an OpenAI-compatible
- *  endpoint. Reasoning stays at "high" to match the validated chat path —
- *  DeepSeek V4 only honors high/xhigh, and OpenRouter returns reasoning in a
- *  separate field, so `message.content` is still clean JSON. */
-export function makeOpenRouterCompletion(opts: OpenRouterCompletionOpts): CompletionFn {
-	const baseUrl = opts.baseUrl ?? "https://openrouter.ai/api/v1";
+ *  endpoint. Thinking is disabled server-side, so `message.content` is clean JSON
+ *  with no separate reasoning field to strip. */
+export function makeCompletion(opts: CompletionOpts): CompletionFn {
 	return async (messages) => {
-		const res = await fetch(`${baseUrl}/chat/completions`, {
+		const res = await fetch(`${opts.baseUrl}/chat/completions`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${opts.apiKey}`,
+				...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
 			},
 			body: JSON.stringify({
 				model: opts.model,
 				messages,
 				stream: false,
-				reasoning: { effort: "high" },
 			}),
 		});
 		if (!res.ok) {

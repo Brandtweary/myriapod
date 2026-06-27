@@ -30,8 +30,8 @@ export interface Thought {
 	metadata: { no_stem?: boolean } | null;
 }
 
-// The browser asset emitted by scripts/build-stock-kg.py.
-export interface StockGraphAsset {
+// The serialized personal-graph asset persisted to IndexedDB.
+export interface GraphAsset {
 	meta: {
 		version: number;
 		node_count: number;
@@ -39,7 +39,6 @@ export interface StockGraphAsset {
 		last_modified: string;
 	};
 	thoughts: Record<string, Thought>;
-	embeddings: Record<string, number[]>;
 }
 
 // Retrieval provenance — which graph a gutter item came from. Drives the
@@ -55,7 +54,7 @@ export interface TermMatch {
 	source?: RetrievalSource;
 }
 
-// PPR/MMR result (right gutter). Mirrors server.py's _triple_to_dict.
+// PPR result (right gutter). Mirrors server.py's _triple_to_dict.
 export interface Triple {
 	subject: string;
 	predicate: string;

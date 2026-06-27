@@ -2,11 +2,9 @@ import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
-	ApiKeyPromptDialog,
 	AppStorage,
 	ChatPanel,
 	CustomProvidersStore,
-	createJavaScriptReplTool,
 	IndexedDBStorageBackend,
 	// PersistentStorageDialog, // TODO: Fix - currently broken
 	ProviderKeysStore,
@@ -23,16 +21,14 @@ import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import {
+	CYMBIONT_LLM_BASE,
 	CYMBIONT_MODEL,
-	CYMBIONT_PROXY_BASE,
-	CYMBIONT_PROXY_PROVIDER,
+	CYMBIONT_MODEL_ID,
+	CYMBIONT_PROVIDER,
+	CYMBIONT_PROVIDER_KEY,
 	CYMBIONT_THINKING_LEVEL,
-	DEEPSEEK_V4_FLASH,
-	proxyChatModel,
 } from "./cymbiont-model.js";
-import { ExportTab, OpenRouterKeyTab } from "./settings.js";
-import { showGrantModal } from "./grant-modal.js";
-import { load as loadBotd } from "@fingerprintjs/botd";
+import { ExportTab, MemoryTab } from "./settings.js";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
@@ -41,9 +37,14 @@ import {
 } from "./custom-messages.js";
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
-import { retrieve } from "./kg/retrieve.js";
-import { makeOpenRouterCompletion, runIngestion } from "./kg/ingest.js";
-import type { StockGraphAsset, TermMatch, Triple } from "./kg/types.js";
+import { retrieve, retrieveVacuum } from "./kg/retrieve.js";
+import { RetrievalPool } from "./kg/retrieval-pool.js";
+import { makeCompletion, runIngestion } from "./kg/ingest.js";
+import type { GraphAsset, TermMatch, Triple } from "./kg/types.js";
+import { installVoiceCapture } from "./voice.js";
+import { CascadeSession } from "./cascade.js";
+import { type ConsentChoice, showConsentModal } from "./consent-modal.js";
+import { installMemoryButton } from "./memory-button.js";
 
 // Register custom message renderers
 registerCustomMessageRenderers();
@@ -63,10 +64,15 @@ setTranslations({
 	} as typeof baseTranslations.en,
 });
 
-// Personal knowledge graph persistence (Slice 4): one serialized StockGraphAsset
-// blob in its own IndexedDB store — the user's memory across all conversations.
+// Personal knowledge graph persistence (Slice 4): one serialized GraphAsset blob
+// in its own IndexedDB store — the user's memory across all conversations.
 const PERSONAL_GRAPH_STORE = "personal-graph";
 const PERSONAL_GRAPH_KEY = "graph";
+
+// Memory-consent persistence: the visitor's opt-in choice, remembered per browser
+// so the consent modal asks only once.
+const CONSENT_STORE = "memory-consent";
+const CONSENT_KEY = "choice";
 
 // Create stores
 const settings = new SettingsStore();
@@ -82,12 +88,13 @@ const configs = [
 	customProviders.getConfig(),
 	sessions.getConfig(),
 	{ name: PERSONAL_GRAPH_STORE }, // personal knowledge graph (serialized asset)
+	{ name: CONSENT_STORE }, // memory-consent choice
 ];
 
 // Create backend
 const backend = new IndexedDBStorageBackend({
 	dbName: "pi-web-ui-example",
-	version: 3, // v3: added the personal-graph store
+	version: 4, // v4: added the memory-consent store
 	stores: configs,
 });
 
@@ -101,170 +108,24 @@ sessions.setBackend(backend);
 const storage = new AppStorage(settings, providerKeys, sessions, customProviders, backend);
 setAppStorage(storage);
 
-// --- Serving path: own-key vs owner-funded (proxy) -------------------------
-const OPENROUTER_DIRECT_BASE = "https://openrouter.ai/api/v1";
-// providerKeys slot holding a redeemed family token (set by settings redemption).
-const FAMILY_TOKEN_SLOT = "cymbiont-family";
-// providerKeys slot holding the anonymous free-tier continuity token (minted at
-// /anon-init). Its presence is also the "welcome already shown" signal — the modal
-// reappears only if the token is gone (cleared storage → a re-mint needs re-gating).
-const ANON_TOKEN_SLOT = "cymbiont-anon";
-// The proxy origin (CYMBIONT_PROXY_BASE minus the /v1 suffix) — where /redeem lives.
-const CYMBIONT_PROXY_ORIGIN = CYMBIONT_PROXY_BASE.replace(/\/v1\/?$/, "");
 
-// BotD bot-detection verdict, computed once on boot and sent to /anon-init as the
-// invisible bot gate. Fail-OPEN: stays {bot:false} if BotD is blocked or errors, so
-// a real browser whose BotD a privacy extension suppressed isn't punished (the
-// honeypot + time-trap still gate that grant).
-let botdVerdict: { bot: boolean } = { bot: false };
-loadBotd()
-	.then(async (botd) => {
-		await botd.collect();
-		return botd.detect();
-	})
-	.then((r) => {
-		botdVerdict = { bot: r.bot === true };
-		dbg(`botd: bot=${r.bot}`);
-	})
-	.catch((e) => dbgWarn("botd unavailable (fail-open)", e));
-
-type ServingPath = {
-	mode: "own" | "family" | "anon";
-	model: Model<"openai-completions">;
-	baseUrl: string; // for the ingestion completion
-	auth: string; // bearer the ingestion completion sends
-};
-
-// The active serving path, (re)resolved on each createAgent.
-let servingPath: ServingPath;
-
-// Decide how this session reaches the model:
-//   own-key → the user's OpenRouter key, calling OpenRouter directly (no proxy)
-//   family  → a redeemed family token, through the proxy
-//   anon    → a minted free-tier continuity token (or the "anon" placeholder
-//             until /anon-init grants one), through the proxy
-// For owner-funded paths we pre-populate the proxy provider's key slot so the
-// framework's pre-send check AND getApiKey both resolve it without a key prompt.
-async function resolveServingPath(): Promise<ServingPath> {
-	const ownKey = await providerKeys.get("openrouter");
-	if (ownKey) {
-		return { mode: "own", model: CYMBIONT_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
-	}
-	const familyToken = await providerKeys.get(FAMILY_TOKEN_SLOT);
-	if (familyToken && familyToken.length) {
-		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, familyToken);
-		return { mode: "family", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth: familyToken };
-	}
-	// Anonymous: use the stored grant token if present; "anon" is the pre-grant
-	// placeholder that triggers the welcome modal + /anon-init mint on first send.
-	const anonToken = await providerKeys.get(ANON_TOKEN_SLOT);
-	const auth = anonToken && anonToken.length ? anonToken : "anon";
-	await providerKeys.set(CYMBIONT_PROXY_PROVIDER, auth);
-	return { mode: "anon", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth };
-}
-
-// Redeem a family code at the proxy → stores the returned token so the NEXT chat
-// resolves to the family serving path. Used by the Access settings tab.
-async function redeemFamilyCode(code: string): Promise<{ ok: boolean; error?: string }> {
-	try {
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/redeem`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ code }),
-		});
-		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
-		if (!res.ok || !data.token) {
-			return { ok: false, error: data.error ?? `HTTP ${res.status}` };
-		}
-		await providerKeys.set(FAMILY_TOKEN_SLOT, data.token);
-		dbg("family code redeemed; token stored (family mode applies on the next new chat)");
-		return { ok: true };
-	} catch (err) {
-		return { ok: false, error: err instanceof Error ? err.message : String(err) };
-	}
-}
-
-// Fetch the current hosted-credit balance for the Access settings readout. Only
-// meaningful on the owner-funded paths; own-key has no hosted balance to show.
-async function fetchHostedBalance(): Promise<{
-	tier: string;
-	remaining: number;
-	grant: number;
-} | null> {
-	if (servingPath.mode === "own") return null;
-	try {
-		const headers: Record<string, string> = {};
-		// Send the bearer for any authenticated proxy path (family OR a granted anon
-		// token); only the "anon" placeholder has no balance to look up.
-		if (servingPath.auth && servingPath.auth !== "anon") {
-			headers.Authorization = `Bearer ${servingPath.auth}`;
-		}
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, { headers });
-		if (!res.ok) return null;
-		return (await res.json()) as { tier: string; remaining: number; grant: number };
-	} catch {
-		return null;
-	}
-}
-
-// Open the settings dialog (Access + Export tabs). Shared by the header gear
-// button and the first-send welcome modal's "use my own key" action. Async so the
-// Access tab is constructed with the currently-stored key (editable + clearable).
+// Open the settings dialog. There's no key/credit tab anymore — chat runs against
+// the self-hosted endpoint for free, so the only settings are personal-graph
+// backup/restore (Export) and the memory-consent toggle (added in the consent gate).
 const openSettings = async () => {
-	const currentKey = (await providerKeys.get("openrouter")) ?? "";
 	SettingsDialog.open([
-		new OpenRouterKeyTab({
-			currentKey,
-			onSaveKey: async (key: string) => {
-				if (key) await providerKeys.set("openrouter", key);
-				else await providerKeys.delete("openrouter");
-			},
-			onRedeem: redeemFamilyCode,
-			getBalance: fetchHostedBalance,
+		new MemoryTab({
+			isEnabled: () => memoryConsent === "granted",
+			setEnabled: (on) => setMemoryConsent(on ? "granted" : "declined"),
 		}),
-		new ExportTab({ onExport: downloadPersonalGraph, onImport: importPersonalGraphFromFile }),
+		new ExportTab({
+			onExport: downloadPersonalGraph,
+			onImport: importPersonalGraphFromFile,
+			onDelete: deletePersonalGraph,
+		}),
 	]);
 };
 
-// Mint (or recover) the anonymous free-tier token via /anon-init, carrying the
-// grant gates from the welcome modal + the BotD verdict. Returns the token, or null
-// if the grant was refused (gates failed / daily signups maxed).
-async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): Promise<string | null> {
-	try {
-		const existing = (await providerKeys.get(ANON_TOKEN_SLOT)) ?? "";
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/anon-init`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				...(existing ? { Authorization: `Bearer ${existing}` } : {}),
-			},
-			body: JSON.stringify({ ...signals, botd: botdVerdict }),
-		});
-		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
-		if (!res.ok || !data.token) {
-			dbg(`anon-init refused: ${data.error ?? `HTTP ${res.status}`}`);
-			return null;
-		}
-		return data.token;
-	} catch (err) {
-		dbgError("anon-init failed", err);
-		return null;
-	}
-}
-
-// On the first anonymous send (no grant token yet) show the welcome modal — which
-// also collects the honeypot + time-trap — then mint the grant and switch the proxy
-// bearer to the real token. Idempotent: once a token exists, this is a no-op.
-async function ensureAnonGrant(): Promise<void> {
-	if (servingPath.mode !== "anon" || servingPath.auth !== "anon") return;
-	const signals = await showGrantModal({ onOpenSettings: openSettings });
-	const token = await initAnonGrant(signals);
-	if (token) {
-		await providerKeys.set(ANON_TOKEN_SLOT, token);
-		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, token);
-		servingPath.auth = token;
-	}
-}
 
 let currentSessionId: string | undefined;
 let currentTitle = "";
@@ -283,7 +144,6 @@ let lastUpdateAt = 0;
 let updateCount = 0;
 
 // --- Browser-local knowledge graph (no server; retrieval runs in-page) ---
-let kgGraph: Graph | undefined;
 // Per-conversation injected-ledger (cross-turn dedup). Reset on each createAgent.
 // NOTE: a RESTORED session starts with an empty ledger even though its saved
 // kg-context breadcrumbs are in the transcript — so the first turns after a
@@ -414,82 +274,169 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
-// Load the frozen stock graph (static asset, built by scripts/build-stock-kg.py)
-// into an in-page Graph. Retrieval is fully client-side — nothing hits a server.
-const loadStockGraph = async () => {
-	try {
-		const base = import.meta.env.BASE_URL ?? "/";
-		const res = await fetch(`${base}stock-kg.json`);
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const asset = (await res.json()) as StockGraphAsset;
-		kgGraph = new Graph(asset);
-		dbg(`stock KG loaded: ${asset.meta.node_count} nodes, ${asset.meta.edge_count} edges`);
-	} catch (err) {
-		dbgError("stock KG load failed — retrieval disabled:", err);
-		kgGraph = undefined;
-	}
-};
 
-// Fold an ingestion call's tokens + cost into the SESSION total. The framework's
-// stats line sums msg.usage over assistant messages, so attributing ingestion to
-// the latest assistant message makes the displayed total the true session cost
-// (chat + every ingestion the chat triggered) — no override of framework UI.
-function addIngestionCostToSession(promptTokens: number, completionTokens: number): void {
-	const c = DEEPSEEK_V4_FLASH.cost;
-	const inCost = (promptTokens / 1_000_000) * c.input;
-	const outCost = (completionTokens / 1_000_000) * c.output;
-	type Usage = {
-		input: number;
-		output: number;
-		cost?: { input?: number; output?: number; total?: number };
-	};
-	const msgs = agent.state.messages as unknown as Array<{ role: string; usage?: Usage }>;
-	for (let i = msgs.length - 1; i >= 0; i--) {
-		const m = msgs[i];
-		if (m.role === "assistant" && m.usage) {
-			m.usage.input += promptTokens;
-			m.usage.output += completionTokens;
-			if (m.usage.cost) {
-				m.usage.cost.input = (m.usage.cost.input ?? 0) + inCost;
-				m.usage.cost.output = (m.usage.cost.output ?? 0) + outCost;
-				m.usage.cost.total = (m.usage.cost.total ?? 0) + inCost + outCost;
-			}
-			break;
-		}
+// --- Memory consent --------------------------------------------------------
+// Personal-graph writes are opt-in: NOTHING is ingested until the visitor agrees.
+// "undecided" = the consent modal hasn't been answered yet in this browser.
+let memoryConsent: ConsentChoice | "undecided" = "undecided";
+// Ingestion activity for the memory button: idle | armed (debounce counting down) |
+// running (extraction in flight). The button reads consent + activity together.
+let ingestActivity: "idle" | "armed" | "running" = "idle";
+// Assigned in initApp once the memory button exists, so the scheduler can repaint it.
+let refreshMemoryUi: () => void = () => {};
+let consentPrompted = false; // guards against opening a second modal while one is up
+
+async function loadMemoryConsent(): Promise<void> {
+	try {
+		const v = await backend.get<ConsentChoice>(CONSENT_STORE, CONSENT_KEY);
+		if (v === "granted" || v === "declined") memoryConsent = v;
+	} catch (err) {
+		dbgError("memory-consent load failed (defaulting undecided):", err);
 	}
-	chatPanel.agentInterface?.requestUpdate?.();
-	dbg(`ingestion cost folded into session: +${promptTokens}in/${completionTokens}out tok, +$${(inCost + outCost).toFixed(6)}`);
 }
 
-// Fire-and-forget per-turn ingestion into the personal graph. Reads the user's
-// own OpenRouter key (Phase 3 is own-key only — a no-op on the hosted free tier
-// until the Phase 4 proxy supplies an ingestion route). Always Flash: cheap
-// structured extraction, independent of the chat model.
-async function triggerIngestion(userText: string, messages: AgentMessage[]): Promise<void> {
+async function setMemoryConsent(choice: ConsentChoice): Promise<void> {
+	memoryConsent = choice;
+	refreshMemoryUi();
+	try {
+		await backend.set(CONSENT_STORE, CONSENT_KEY, choice);
+	} catch (err) {
+		dbgError("memory-consent save failed:", err);
+	}
+}
+
+// Show the consent modal once, on the first interaction (send OR mic toggle), if
+// the visitor hasn't decided. Fire-and-forget: the conversation proceeds; the
+// answer just gates whether this turn and later ones get ingested.
+async function ensureMemoryConsent(): Promise<void> {
+	if (memoryConsent !== "undecided" || consentPrompted) return;
+	consentPrompted = true;
+	const choice = await showConsentModal();
+	await setMemoryConsent(choice);
+}
+
+// --- Ingestion: collect → arm-on-pause → debounce → batch ------------------
+// Model (think conversation, NOT turns): NOTHING ingests while recording is live —
+// exchanges just accumulate into a batch. Ingestion only arms once the conversation
+// pauses: voice = mic toggled off AND the agent finished its last response; text =
+// the agent turn ended. Then a 15s debounce, then ONE extraction of the whole batch.
+// Resuming recording cancels a pending debounce. The memory button force-flushes now.
+// Two extractions never run at once: a flush that lands mid-run is honored after.
+const INGEST_DEBOUNCE_MS = 15_000;
+const MIN_RUNNING_MS = 2200; // hold the "running" pulse ~2 full cycles so it's clearly visible
+let ingestPending: string[] = []; // formatted exchanges since the last extraction
+let ingestTimer: ReturnType<typeof setTimeout> | undefined;
+let ingestRunning = false;
+let ingestRequeue = false; // a flush was requested while one was already running
+
+// Format one exchange the way the extractor expects.
+function buildTurnText(userText: string, assistantText: string): string {
+	return `[USER]:\n${userText}\n\n[ASSISTANT]:\n${assistantText}`;
+}
+
+// Collect a completed exchange into the batch (no timer). Consent-gated — nothing is
+// queued until the visitor opts in. While recording is live the batch just
+// accumulates; ingestion never fires mid-conversation (arming is separate, below).
+function queueIngest(userText: string, assistantText: string): void {
+	if (memoryConsent !== "granted") return; // consent gate — no writes until opted in
 	if (!userText.trim()) return;
-	const turnText = `[USER]:\n${userText}\n\n[ASSISTANT]:\n${lastAssistantText(messages)}`;
-	// Ingestion rides the SAME serving path as chat: own-key → OpenRouter direct;
-	// owner-funded → the proxy (which meters it against the same principal). Always
-	// Flash: cheap structured extraction, independent of the chat model.
-	const completion = makeOpenRouterCompletion({
-		apiKey: servingPath.auth,
-		baseUrl: servingPath.baseUrl,
-		model: DEEPSEEK_V4_FLASH.id,
-		onUsage: ({ promptTokens, completionTokens }) =>
-			addIngestionCostToSession(promptTokens, completionTokens),
-	});
-	const stats = await runIngestion(userGraph, turnText, completion);
-	if (stats) {
+	ingestPending.push(buildTurnText(userText, assistantText));
+	refreshMemoryUi(); // saved → pending: there's now un-ingested content to save
+}
+
+// Arm the 15s debounce — call ONLY once the conversation has actually paused (voice:
+// mic toggled off AND the agent finished responding; text: the agent turn ended).
+// No-op if nothing is queued or consent isn't granted.
+function armIngestDebounce(): void {
+	if (memoryConsent !== "granted" || !ingestPending.length) return;
+	if (ingestTimer) clearTimeout(ingestTimer);
+	ingestTimer = setTimeout(() => void flushIngestion(), INGEST_DEBOUNCE_MS);
+	ingestActivity = "armed";
+	refreshMemoryUi();
+	dbg(`memory: ARMED — ${ingestPending.length} exchange(s) queued, ${INGEST_DEBOUNCE_MS}ms debounce`);
+}
+
+// Cancel a pending debounce — call when recording resumes (no ingestion while the
+// conversation is live). Keeps the collected batch; just stops the countdown.
+function cancelIngestDebounce(): void {
+	if (ingestTimer) {
+		clearTimeout(ingestTimer);
+		ingestTimer = undefined;
+		dbg("memory: debounce CANCELED (recording resumed)");
+	}
+	if (!ingestRunning) {
+		ingestActivity = "idle";
+		refreshMemoryUi();
+	}
+}
+
+// Run ingestion now over everything queued — the debounce fire and the memory
+// button both call this. Batches all pending exchanges into a single extraction and
+// serializes concurrent flushes. Turns that merely accumulate during a run wait for
+// their own debounce; only an explicit flush mid-run re-fires when this one ends.
+async function flushIngestion(): Promise<void> {
+	if (ingestTimer) {
+		clearTimeout(ingestTimer);
+		ingestTimer = undefined;
+	}
+	if (!ingestPending.length) return;
+	if (ingestRunning) {
+		ingestRequeue = true; // never two at once — honor after the current run
+		return;
+	}
+	const batch = ingestPending;
+	ingestPending = [];
+	ingestRunning = true;
+	ingestActivity = "running";
+	refreshMemoryUi();
+	const runStart = performance.now();
+	dbg(`memory: RUNNING — extracting batch of ${batch.length}`);
+	try {
+		let llmUsage = "";
+		const completion = makeCompletion({
+			baseUrl: CYMBIONT_LLM_BASE,
+			model: CYMBIONT_MODEL_ID,
+			apiKey: CYMBIONT_PROVIDER_KEY,
+			onUsage: ({ promptTokens, completionTokens }) => {
+				llmUsage = `${promptTokens}p/${completionTokens}c tok`;
+			},
+		});
+		const llmStart = performance.now();
+		const stats = await runIngestion(userGraph, batch.join("\n\n"), completion);
 		dbg(
-			`ingestion: +${stats.newEntities} new nodes, +${stats.linksAdded} links, ` +
-				`${stats.clausesMerged} clauses merged, ${stats.rejectedOrphan} orphans rejected, ` +
-				`${stats.expirationsApplied} expired (personal graph now ${userGraph.thoughts.size} thoughts)`,
+			`ingestion LLM: ${Math.round(performance.now() - llmStart)}ms, ` +
+				`${llmUsage || "NO usage reported (call skipped/thin or failed)"}`,
 		);
-		if (stats.entitiesAdded || stats.linksAdded || stats.clausesMerged || stats.expirationsApplied) {
-			await saveUserGraph();
+		if (stats) {
+			dbg(
+				`ingestion (batch of ${batch.length}): +${stats.newEntities} new nodes, ` +
+					`+${stats.linksAdded} links, ${stats.clausesMerged} clauses merged, ` +
+					`${stats.rejectedOrphan} orphans rejected, ${stats.expirationsApplied} expired ` +
+					`(personal graph now ${userGraph.thoughts.size} thoughts)`,
+			);
+			if (stats.entitiesAdded || stats.linksAdded || stats.clausesMerged || stats.expirationsApplied) {
+				await saveUserGraph();
+			}
+		} else {
+			dbg(`ingestion (batch of ${batch.length}): skipped (thin) or no parseable output`);
 		}
-	} else {
-		dbg("ingestion: skipped (thin turn) or no parseable output");
+	} catch (err) {
+		dbgError("ingestion failed (non-fatal):", err);
+	} finally {
+		// Hold the "running" pulse on screen at least MIN_RUNNING_MS even when the
+		// extraction is sub-second, so the state is actually perceptible.
+		const elapsed = performance.now() - runStart;
+		if (elapsed < MIN_RUNNING_MS) {
+			await new Promise((r) => setTimeout(r, MIN_RUNNING_MS - elapsed));
+		}
+		ingestRunning = false;
+		ingestActivity = "idle"; // arming is explicit (on conversation pause), not automatic
+		refreshMemoryUi();
+		dbg(`memory: IDLE — ingest cycle done in ${Math.round(performance.now() - runStart)}ms`);
+		if (ingestRequeue) {
+			ingestRequeue = false;
+			void flushIngestion(); // a debounce/button flush landed mid-run; honor it
+		}
 	}
 }
 
@@ -498,7 +445,7 @@ async function triggerIngestion(userText: string, messages: AgentMessage[]): Pro
 // One global graph per browser. Loaded at boot, saved after each ingestion.
 async function loadUserGraph(): Promise<void> {
 	try {
-		const asset = await backend.get<StockGraphAsset>(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY);
+		const asset = await backend.get<GraphAsset>(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY);
 		if (asset) {
 			userGraph = new Graph(asset);
 			dbg(`personal graph loaded: ${asset.meta.node_count} nodes, ${asset.meta.edge_count} edges`);
@@ -532,13 +479,22 @@ function downloadPersonalGraph(): void {
 
 // Import: replace the personal graph from an uploaded export and persist it.
 async function importPersonalGraphFromFile(file: File): Promise<void> {
-	const asset = JSON.parse(await file.text()) as StockGraphAsset;
+	const asset = JSON.parse(await file.text()) as GraphAsset;
 	if (!asset || typeof asset !== "object" || typeof asset.thoughts !== "object") {
 		throw new Error("not a Cymbiont personal-graph export");
 	}
 	userGraph = new Graph(asset);
 	await saveUserGraph();
 	dbg(`personal graph imported: ${userGraph.thoughts.size} thoughts`);
+}
+
+// Wipe the personal graph (Settings → delete). The privacy assurance: the visitor
+// can remove everything Cymbiont remembered, not just trust that it's local.
+async function deletePersonalGraph(): Promise<void> {
+	userGraph = Graph.empty();
+	await saveUserGraph();
+	updateGutters({ terms: [], triples: [] });
+	dbg("personal graph deleted (reset to empty)");
 }
 
 // agent.prompt accepts a string or an AgentMessage[]; pull the user's text out.
@@ -578,14 +534,13 @@ const lastAssistantText = (messages: AgentMessage[]): string => {
 // The gutters: term matches (left) + triples (right). Owned plain DOM we update
 // imperatively from the latest retrieval's VACUUM set (full pre-dedup), so they
 // show what WOULD retrieve this turn even when the injection deduped some out.
-// Provenance split: personal-graph items (the common case) render first in the
-// default green; stock-graph items (the marked exception) group below a
-// subheading in violet + serif. "stock" is the rare case, so it's the one we mark.
-const termCard = (t: TermMatch) => html`<div class="cw-term${t.source === "stock" ? " cw-term--stock" : ""}">
+// Single-graph (personal only) since the stock/FAQ graph was dropped — no
+// provenance split anymore.
+const termCard = (t: TermMatch) => html`<div class="cw-term">
 	<div class="cw-term-label">${t.label}</div>
 	<div class="cw-term-desc">${t.description}</div>
 </div>`;
-const tripleCard = (t: Triple) => html`<div class="cw-triple${t.source === "stock" ? " cw-triple--stock" : ""}">
+const tripleCard = (t: Triple) => html`<div class="cw-triple">
 	<span class="cw-tri-s">${t.subject}</span>
 	<span class="cw-tri-p">--${t.predicate}--&gt;</span>
 	<span class="cw-tri-o">${t.object}</span>
@@ -597,24 +552,11 @@ const renderGutters = () => {
 	const terms = lastVacuum?.terms ?? [];
 	const triples = lastVacuum?.triples ?? [];
 
-	const userTerms = terms.filter((t) => t.source !== "stock");
-	const stockTerms = terms.filter((t) => t.source === "stock");
-	const userTriples = triples.filter((t) => t.source !== "stock");
-	const stockTriples = triples.filter((t) => t.source === "stock");
-
 	render(
 		html`
 			<div class="cw-gutter-title">Nodes</div>
 			<div class="cw-gutter-inner">
-				${
-					terms.length
-						? html`
-								${userTerms.map(termCard)}
-								${stockTerms.length ? html`<div class="cw-gutter-sub">from Cymbiont</div>` : null}
-								${stockTerms.map(termCard)}
-							`
-						: html`<div class="cw-gutter-empty">no matches</div>`
-				}
+				${terms.length ? terms.map(termCard) : html`<div class="cw-gutter-empty">no matches</div>`}
 			</div>
 		`,
 		leftGutter,
@@ -623,15 +565,7 @@ const renderGutters = () => {
 		html`
 			<div class="cw-gutter-title">Relationships</div>
 			<div class="cw-gutter-inner">
-				${
-					triples.length
-						? html`
-								${userTriples.map(tripleCard)}
-								${stockTriples.length ? html`<div class="cw-gutter-sub">from Cymbiont</div>` : null}
-								${stockTriples.map(tripleCard)}
-							`
-						: html`<div class="cw-gutter-empty">no triples</div>`
-				}
+				${triples.length ? triples.map(tripleCard) : html`<div class="cw-gutter-empty">no triples</div>`}
 			</div>
 		`,
 		rightGutter,
@@ -673,55 +607,24 @@ window.addEventListener("resize", () => {
 	resizeTimer = setTimeout(fitTermDescriptions, 150);
 });
 
-// The REPL tool's stock description (pi-web-ui prompts.js) is replaced with this
-// artifact-free version so the model never offers an artifacts/file store or a
-// document-extraction tool it doesn't have. The REPL + reading attachments are
-// the only tools this demo ships.
-const CLEAN_REPL_DESCRIPTION = `# JavaScript REPL
-
-## Purpose
-Execute JavaScript code in a sandboxed browser environment with full Web APIs.
-
-## When to Use
-- Quick calculations or data transformations
-- Testing JavaScript snippets in isolation
-- Processing data with libraries (XLSX, CSV, etc.)
-
-## Environment
-- ES2023+ JavaScript (async/await, optional chaining, nullish coalescing, etc.)
-- All browser APIs: DOM, Canvas, WebGL, Fetch, Web Workers, WebSockets, Crypto, etc.
-- Import any npm package: await import('https://esm.run/package-name')
-
-## Input
-- Read the user's attached files via listAttachments(), readTextAttachment(id), and readBinaryAttachment(id).
-
-## Output
-- console.log(...) output is captured for you to read (the user does not see it). Return a value to surface a result.
-
-## Notes
-- Objects on the global scope do NOT persist between calls.
-- Graphics: use fixed dimensions (e.g. 800x600), not window.innerWidth/Height.
-
-This REPL and reading the user's attachments are your ONLY tools. There is no artifacts system, no persistent file store, and no document-extraction tool — do not offer them.`;
-
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
 	}
 
-	// Decide own-key vs owner-funded BEFORE building the agent — it sets the
-	// model's baseUrl/provider and (for owner-funded) the proxy auth slot.
-	servingPath = await resolveServingPath();
+	// The chat model is the single self-hosted endpoint. vLLM needs no API key, but
+	// pi-web-ui's pre-send check still wants one in the provider slot — seed a
+	// throwaway bearer the server ignores.
+	await providerKeys.set(CYMBIONT_PROVIDER, CYMBIONT_PROVIDER_KEY);
 	const baseState: Partial<AgentState> = initialState ?? {
-		systemPrompt: `You are a helpful AI assistant with access to a JavaScript REPL: execute JavaScript code in a sandboxed browser environment (calculations, data processing, etc.). Use it when it helps you give an accurate, correct answer.`,
+		systemPrompt: `You are a helpful AI assistant.`,
 		thinkingLevel: CYMBIONT_THINKING_LEVEL,
 		messages: [],
 		tools: [],
 	};
 	agent = new Agent({
-		// Force the resolved serving-path model (own-key → OpenRouter direct;
-		// owner-funded → the proxy), overriding any model a restored session stored.
-		initialState: { ...baseState, model: servingPath.model },
+		// Force the hardcoded local model, overriding any model a restored session stored.
+		initialState: { ...baseState, model: CYMBIONT_MODEL },
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
@@ -745,37 +648,23 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
 			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
 			if (userText.trim()) {
-				// First anonymous send (no grant token yet): welcome the visitor once
-				// (free credits + the own-key / family alternatives), collect the
-				// honeypot + time-trap, and mint the grant token via /anon-init. No-op
-				// once a token exists or on the own-key / family paths.
-				await ensureAnonGrant();
+				void ensureMemoryConsent(); // first send → one-time memory opt-in
 				const agentText = lastAssistantText(agent.state.messages);
-				// Personal graph retrieves FIRST (privileged) so its facts win the
-				// shared-ledger cross-turn dedup; stock retrieves against the same ledger.
+				// Retrieval runs over the per-browser personal graph (the user's own
+				// memory). The frozen stock/FAQ graph was dropped in the
+				// standalone-thesis turn — this is now a single-graph path.
 				const userR = retrieve(userGraph, ledger, userText, agentText);
-				const stockR = kgGraph ? retrieve(kgGraph, ledger, userText, agentText) : null;
 				const vacuum = {
-					terms: [
-						...userR.vacuum.terms.map((t) => ({ ...t, source: "user" as const })),
-						...(stockR?.vacuum.terms ?? []).map((t) => ({ ...t, source: "stock" as const })),
-					],
-					triples: [
-						...userR.vacuum.triples.map((t) => ({ ...t, source: "user" as const })),
-						...(stockR?.vacuum.triples ?? []).map((t) => ({ ...t, source: "stock" as const })),
-					],
+					terms: userR.vacuum.terms.map((t) => ({ ...t, source: "user" as const })),
+					triples: userR.vacuum.triples.map((t) => ({ ...t, source: "user" as const })),
 				};
 				updateGutters(vacuum);
-				const blocks = [userR.injectionBlock, stockR?.injectionBlock].filter(
-					(b): b is string => !!b,
-				);
-				if (blocks.length) {
-					agent.state.messages = [...agent.state.messages, createKgContextMessage(blocks.join("\n\n"))];
+				if (userR.injectionBlock) {
+					agent.state.messages = [...agent.state.messages, createKgContextMessage(userR.injectionBlock)];
 				}
 				dbg(
 					`kg retrieve: user[${userR.vacuum.terms.length}t/${userR.vacuum.triples.length}r] ` +
-						`stock[${stockR?.vacuum.terms.length ?? 0}t/${stockR?.vacuum.triples.length ?? 0}r] ` +
-						`injected=${blocks.length ? "yes" : "no (deduped)"}`,
+						`injected=${userR.injectionBlock ? "yes" : "no (deduped)"}`,
 				);
 			}
 		} catch (err) {
@@ -856,13 +745,12 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
 				setTimeout(forceChatRepaint, 100);
-				// Fire-and-forget: ingest the just-completed turn into the personal
-				// graph. Newly-minted nodes surface on the next turn's retrieval.
+				// Typed chat: the agent turn just ended → collect the exchange and arm the
+				// debounce (text has no mic, so agent-done is the conversation pause).
 				const turnUserText = pendingTurnUserText;
 				pendingTurnUserText = "";
-				void triggerIngestion(turnUserText, agent.state.messages).catch((err) =>
-					dbgError("ingestion failed (non-fatal):", err),
-				);
+				queueIngest(turnUserText, lastAssistantText(agent.state.messages));
+				armIngestDebounce();
 			}
 
 			// Re-render ONLY the header (its own DOM node) and ONLY when its
@@ -877,48 +765,33 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	});
 
 	await chatPanel.setAgent(agent, {
-		onApiKeyRequired: async (provider: string) => {
-			// Owner-funded paths pre-set the proxy provider's key slot, so a prompt
-			// for it would be spurious — accept silently. Only the own-key
-			// (openrouter) path should ever reach a prompt.
-			if (provider === CYMBIONT_PROXY_PROVIDER) return true;
-			return await ApiKeyPromptDialog.prompt(provider);
+		onApiKeyRequired: async () => {
+			// The only provider is the keyless local endpoint (its slot is pre-seeded),
+			// so a key prompt should never fire — accept silently if one ever does.
+			return true;
 		},
-		toolsFactory: (_agent, _agentInterface, _artifactsPanel, runtimeProvidersFactory) => {
-			const replTool = createJavaScriptReplTool();
-			replTool.runtimeProvidersFactory = runtimeProvidersFactory;
-			// pi-web-ui's stock REPL description advertises an artifacts store
-			// (createOrUpdateArtifact/getArtifact/...) and ChatPanel auto-injects a
-			// separate `artifacts` tool with a 50%-width side panel. This is a chat/
-			// FAQ demo, not an artifacts workbench — override the description so the
-			// model is never told about artifacts (the latent sandbox helpers stay
-			// undocumented and unused). The injected `artifacts` tool itself is
-			// stripped after setAgent below.
-			Object.defineProperty(replTool, "description", {
-				value: CLEAN_REPL_DESCRIPTION,
-				configurable: true,
-			});
-			return [replTool];
-		},
+		// No tools. The model is a plain conversational endpoint — and crucially,
+		// the local vLLM server is launched without --enable-auto-tool-choice, so
+		// ANY tool in the request makes vLLM default tool_choice to "auto" and 400.
+		// (The KG-search tool, when it lands, goes through the cascade's hand-written
+		// tool loop, not pi-ai's tool field.)
+		toolsFactory: () => [],
 	});
 
-	// The model and reasoning level are hardcoded (DeepSeek V4 via OpenRouter,
-	// reasoning: high). Hide both the model picker and the thinking-level
-	// selector — this is a single-model demo, not a configurable Pi client.
+	// The model and reasoning level are hardcoded (the local self-hosted model,
+	// thinking off). Hide both the model picker and the thinking-level selector —
+	// this is a single-model demo, not a configurable Pi client.
 	if (chatPanel.agentInterface) {
 		chatPanel.agentInterface.enableModelSelector = false;
 		chatPanel.agentInterface.enableThinkingSelector = false;
 	}
 
-	// Strip the `artifacts` tool ChatPanel unconditionally prepends (ChatPanel.js
-	// builds `[artifactsPanel.tool, ...toolsFactory()]`). With no artifacts tool
-	// AND no artifact mention in the REPL description, nothing creates an artifact,
-	// so the side panel never renders — keeping the chat/gutter layout intact.
-	if (agent.state.tools) {
-		agent.state.tools = agent.state.tools.filter(
-			(t) => (t as { name?: string }).name !== "artifacts",
-		);
-	}
+	// Force zero tools. ChatPanel unconditionally prepends its own `artifacts` tool
+	// (`[artifactsPanel.tool, ...toolsFactory()]`), so even with an empty factory the
+	// agent ends up with one tool — which trips vLLM's tool_choice:"auto" default and
+	// 400s every request. Clear the array outright: no tools, no artifacts side panel,
+	// no tool_choice.
+	agent.state.tools = [];
 };
 
 const loadSession = async (sessionId: string): Promise<boolean> => {
@@ -957,8 +830,8 @@ const newSession = async () => {
 	currentTitle = "";
 	isEditingTitle = false;
 	currentView = "chat";
-	// Clear ?session= without reloading the page (Brandt: buttons shouldn't
-	// refresh the page; a reload mid-stream is also how conversations vanished).
+	// Clear ?session= without reloading the page (buttons shouldn't refresh the
+	// page; a reload mid-stream is also how conversations vanished).
 	const url = new URL(window.location.href);
 	url.search = "";
 	window.history.replaceState({}, "", url);
@@ -1160,7 +1033,208 @@ async function initApp() {
 	app.append(headerHost, bodyHost, aboutHost);
 	renderGutters(); // initial empty state
 
-	await loadStockGraph();
+	// Voice capture → Unmute cascade. The mic toggle opens a streaming session to
+	// the voice stack (STT → LLM → TTS); within the session, server-side VAD segments
+	// turns. Spoken user + assistant transcripts are appended to the chat as they
+	// stream — voice bypasses agent.prompt(), so we drive the message list directly.
+	let cascade: CascadeSession | undefined;
+	// Voice KG working memory: a fresh recency pool per voice conversation. Unlike
+	// the text path's accumulating ledger, this decaying set is re-injected whole
+	// each VAD turn (updateInstructions replaces the system prompt). Reset when a
+	// new cascade opens.
+	let voicePool = new RetrievalPool();
+	// Which role the in-progress voice message belongs to; a role switch starts a
+	// new chat bubble rather than appending to the previous speaker's.
+	let activeVoiceRole: "user" | "assistant" | null = null;
+	let voiceRepaintQueued = false;
+	const queueVoiceRepaint = () => {
+		// Coalesce per-token deltas into one repaint per frame (forceChatRepaint
+		// reassigns the array + requestUpdate; doing it per token would thrash).
+		if (voiceRepaintQueued) return;
+		voiceRepaintQueued = true;
+		requestAnimationFrame(() => {
+			voiceRepaintQueued = false;
+			forceChatRepaint();
+		});
+	};
+	// The voice agent's system prompt (owned here, not in the transport). STUB —
+	// the real persona is a TODO; for now it's the honest one-liner.
+	const VOICE_SYSTEM_PROMPT =
+		"You are a personal assistant with a long-term knowledge-graph memory. " +
+		"You are spoken to out loud, so keep replies natural and concise.";
+
+	// Pull plain text out of a message's content, whether it's a bare string (user
+	// shape) or an array of {type:"text"} chunks (assistant shape).
+	const voiceContentText = (c: unknown): string => {
+		if (typeof c === "string") return c;
+		if (Array.isArray(c))
+			return c
+				.filter((b): b is TextContent => !!b && (b as TextContent).type === "text")
+				.map((b) => b.text ?? "")
+				.join("");
+		return "";
+	};
+	// Build content in the shape each renderer expects: <user-message> takes a string,
+	// <assistant-message> iterates an array of {type:"text"} chunks (handing it a bare
+	// string makes it iterate over characters → renders nothing).
+	const buildVoiceContent = (role: "user" | "assistant", text: string): unknown =>
+		role === "assistant" ? [{ type: "text", text }] : text;
+
+	// Most-recent spoken text for a role, read off the rendered bubbles.
+	const lastVoiceText = (role: "user" | "assistant"): string => {
+		if (!agent) return "";
+		const msgs = agent.state.messages;
+		for (let i = msgs.length - 1; i >= 0; i--) {
+			const m = msgs[i] as { role?: string; content?: unknown };
+			if (m.role === role) return voiceContentText(m.content);
+		}
+		return "";
+	};
+
+	// User finished a turn (VAD speech_stopped): retrieve over the personal graph,
+	// paint the gutters, and inject the <kg-context> into the cascade's server-side
+	// LLM via session.update. NOTE: whether this lands in the SAME turn or the next
+	// depends on Unmute's LLM-call timing relative to speech_stopped — UNVERIFIED
+	// (the taskpad spike); confirm at the feel test. It's additive either way.
+	const onVoiceUserTurnEnd = () => {
+		try {
+			if (!cascade) return;
+			const userText = lastVoiceText("user");
+			if (!userText.trim()) return;
+			// Voice memory = recency pool, not the ledger. Fold this turn's vacuum into
+			// the pool, then re-inject the WHOLE pool — updateInstructions REPLACES the
+			// system prompt, so anything not re-asserted vanishes. Gutters mirror the
+			// pool (what the model is actually holding), not just this turn's hits.
+			const vac = retrieveVacuum(userGraph, userText, lastVoiceText("assistant"));
+			const pooled = voicePool.update({ terms: vac.terms, triples: vac.triples });
+			updateGutters({
+				terms: pooled.terms.map((t) => ({ ...t, source: "user" as const })),
+				triples: pooled.triples.map((t) => ({ ...t, source: "user" as const })),
+			});
+			cascade.updateInstructions(
+				pooled.injectionBlock
+					? `${VOICE_SYSTEM_PROMPT}\n\n${pooled.injectionBlock}`
+					: VOICE_SYSTEM_PROMPT,
+			);
+			dbg(
+				`voice kg pool: turn ${vac.terms.length}t/${vac.triples.length}r → ` +
+					`pool ${pooled.terms.length}t/${pooled.triples.length}r ` +
+					`inject=${pooled.injectionBlock ? "yes" : "empty"}`,
+			);
+		} catch (err) {
+			dbgError("voice kg retrieval failed (turn proceeds):", err);
+		}
+	};
+
+	// Ingestion-arming state: nothing ingests while the mic is live; arming waits for
+	// mic-off AND the agent having finished its response.
+	let micOn = false;
+	let agentResponding = false;
+
+	// The agent finished its response (cascade response.text.done): collect the
+	// exchange into the batch. Arm the debounce only if the mic is already off —
+	// otherwise the conversation is still live, so ingestion must keep waiting.
+	const onVoiceResponseDone = () => {
+		agentResponding = false;
+		if (!agent) return;
+		queueIngest(lastVoiceText("user"), lastVoiceText("assistant"));
+		if (!micOn) armIngestDebounce();
+	};
+
+	const appendVoiceTranscript = (role: "user" | "assistant", delta: string) => {
+		if (!agent) return;
+		const msgs = agent.state.messages;
+		const last = msgs[msgs.length - 1] as { role?: string; content?: unknown } | undefined;
+		if (activeVoiceRole === role && last?.role === role) {
+			// Replace with a NEW object (not in-place mutation): <message-list> is identity-
+			// reactive, so a mutated same-identity object never re-paints — only a fresh
+			// object identity does. (This is why prior builds showed only one word.)
+			msgs[msgs.length - 1] = {
+				...(last as object),
+				content: buildVoiceContent(role, voiceContentText(last.content) + delta),
+			} as unknown as AgentMessage;
+		} else {
+			msgs.push({
+				role,
+				content: buildVoiceContent(role, delta),
+				timestamp: Date.now(),
+			} as unknown as AgentMessage);
+			activeVoiceRole = role;
+		}
+		queueVoiceRepaint();
+	};
+
+	installVoiceCapture({
+		onStart: async (stream) => {
+			void ensureMemoryConsent(); // first mic toggle → one-time memory opt-in
+			micOn = true;
+			cancelIngestDebounce(); // recording resumed → no ingestion while the convo is live
+			// Resume on an already-live conversation: just restart the mic, keep the WS.
+			// (The backend keepalive keeps the STT leg alive across pauses, so the WS is
+			// safe to reuse — no stale-socket teardown.)
+			if (cascade?.isLive()) {
+				stream.getTracks().forEach((t) => t.stop()); // probe stream is redundant
+				cascade.startRecording();
+				return;
+			}
+			voicePool = new RetrievalPool(); // fresh working memory per conversation
+			cascade = new CascadeSession(
+				{
+					onUserTranscript: (d) => appendVoiceTranscript("user", d),
+					onAssistantTranscript: (d) => appendVoiceTranscript("assistant", d),
+					onSpeechStopped: () => onVoiceUserTurnEnd(),
+					onResponseStart: () => {
+						agentResponding = true;
+					},
+					onResponseDone: () => onVoiceResponseDone(),
+					onState: (s) => dbg(`cascade: ${s}`),
+					onError: (m) => dbgError(`cascade: ${m}`),
+				},
+				{ instructions: VOICE_SYSTEM_PROMPT },
+			);
+			await cascade.start(stream);
+		},
+		// Mic toggle OFF = stop recording (WS stays live so the bot finishes its reply).
+		// This is the conversation pause: arm ingestion once the agent is done responding.
+		onStop: () => {
+			cascade?.stopRecording();
+			micOn = false;
+			if (!agentResponding) armIngestDebounce();
+		},
+	});
+
+	// Close the cascade WS on page unload so we don't leak the stack's single-tenant slot.
+	window.addEventListener("beforeunload", () => {
+		// Best-effort on unload: collect the final exchange and flush now — we can't
+		// wait out the debounce, and the fetch may not complete before the page closes.
+		queueIngest(lastVoiceText("user"), lastVoiceText("assistant"));
+		void flushIngestion();
+		cascade?.stop();
+	});
+
+	// Memory consent + the indicator button. Load the saved opt-in first so the
+	// first turn's ingestion gate is correct, then mount the button (reflects consent
+	// + ingestion activity; click force-saves when on, or offers opt-in when off).
+	await loadMemoryConsent();
+	const onMemoryClick = () => {
+		if (memoryConsent === "granted") {
+			void flushIngestion(); // force-save the queued batch now (skip the debounce)
+		} else {
+			void (async () => setMemoryConsent(await showConsentModal()))();
+		}
+	};
+	const memoryButton = installMemoryButton({
+		getVisual: () => {
+			if (memoryConsent !== "granted") return "off";
+			if (ingestActivity === "running") return "running";
+			if (ingestActivity === "armed") return "armed";
+			// Idle: "pending" if there's un-ingested content to save, else "saved".
+			return ingestPending.length ? "pending" : "saved";
+		},
+		onClick: onMemoryClick,
+	});
+	refreshMemoryUi = () => memoryButton.refresh();
+
 	await loadUserGraph();
 
 	// PersistentStorageDialog is broken upstream — export/import (Memory settings
