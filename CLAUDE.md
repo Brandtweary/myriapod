@@ -63,7 +63,7 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
   - **cymbiont-model.ts** — the single hardcoded chat model: provider id `cymbiont`, `baseUrl` from
     `VITE_LLM_BASE`, reasoning off, zero cost. A throwaway bearer is seeded into the provider key slot
     so pi-web-ui's pre-send key check passes (the local server ignores it).
-  - **voice.ts** — the mic button + toggle state machine (`Ctrl+/` shortcut), browser mic-permission
+  - **voice.ts** — the mic button + toggle state machine (`Ctrl+Space` shortcut), browser mic-permission
     flow, and the recording indicator. Transport-agnostic: the actual audio transport plugs into the
     `onStart(stream) / onStop()` seam (wired to the cascade in main.ts). Toggle interaction, not
     push-to-talk: one press records, the next ends the turn.

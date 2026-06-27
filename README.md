@@ -54,6 +54,12 @@ Point the frontend at them with `VITE_LLM_BASE` (the OpenAI-compatible LLM, `…
 `VITE_CASCADE_URL` (the Unmute realtime WebSocket); both default to a local dev target and are
 overridden at build time for deployment.
 
+The agent ships with a stock system prompt (`VOICE_SYSTEM_PROMPT` in `src/main.ts`) — a deliberately
+evergreen persona that names no model, version, or hardware and reaches for no tools, which suits a
+cloud agent that can't assume its substrate. **If you run your own instance, swap it for a prompt that
+fits your agent** — a local home agent, for example, may well want the hardware and version awareness
+this one omits.
+
 ## Stack
 
 TypeScript on [`@earendil-works/pi-web-ui`](https://www.npmjs.com/package/@earendil-works/pi-web-ui)

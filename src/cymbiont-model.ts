@@ -12,8 +12,12 @@ import type { Model } from "@earendil-works/pi-ai";
 const ENV = import.meta.env as Record<string, string | undefined>;
 export const CYMBIONT_LLM_BASE = ENV.VITE_LLM_BASE ?? "http://127.0.0.1:8123/llm/v1";
 
-// vLLM serves the model under its bare HF id (no --served-model-name override).
-export const CYMBIONT_MODEL_ID = "Qwen/Qwen3.5-9B";
+// The served model name, decoupled from the underlying checkpoint: vLLM serves
+// under a stable `--served-model-name` so swapping the open-weight model on the
+// server is a server-only config change — this constant (and the ingestion path)
+// never has to follow. The voice backend auto-discovers the single served model,
+// so it needs no name at all; only this typed/ingestion path pins one.
+export const CYMBIONT_MODEL_ID = "cymbiont-llm";
 
 // A provider id distinct from "openrouter" so pi-ai treats `model.baseUrl` as a
 // plain OpenAI-compatible endpoint (no openrouter.ai reasoning-format autodetect).

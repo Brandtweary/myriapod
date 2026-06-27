@@ -1,6 +1,9 @@
 # Feature taskpads — planning artifacts, kept local, never tracked (blanket pattern)
 feature_taskpad_*.md
 
+# Post-launch roadmap — local planning artifact, physically here but never tracked
+roadmap.md
+
 # Machine-local agent dev rules — never published
 CLAUDE.local.md
 

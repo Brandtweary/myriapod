@@ -21,10 +21,14 @@ export type VoiceCaptureSeam = {
 	onStop?: () => void;
 };
 
-// Ctrl+/ -- deliberately NOT Alt-based (Alt opens browser menus and collides with
-// the user's Hyprland bindings). One named constant so the binding is a one-line
-// change. `code` is layout-independent ("Slash" is the physical key).
-export const VOICE_TOGGLE = { ctrlKey: true, code: "Slash" } as const;
+// Ctrl+Space -- one-handed and effortless (pinky on Ctrl, thumb on Space, both bottom
+// row, right next to each other). Deliberately NOT Alt-based (Alt opens browser menus
+// and collides with Hyprland bindings); Space is also unclaimed by the browser, unlike
+// most comfortable Ctrl+letter combos (Ctrl+B/E/G/etc. hit bookmarks/search/find). The
+// handler requires NO shift/alt/meta, so Ctrl+Shift+Space etc. won't trigger. One named
+// constant so the binding is a one-line change. `code` is layout-independent.
+// (If a Linux IME ever swallows Ctrl+Space, we're not wedded to Ctrl — swap freely.)
+export const VOICE_TOGGLE = { ctrlKey: true, code: "Space" } as const;
 
 type State = "idle" | "requesting" | "recording" | "denied";
 
@@ -138,7 +142,7 @@ export class VoiceController {
 	private renderButton(): void {
 		const recording = this.state === "recording";
 		const requesting = this.state === "requesting";
-		const label = recording ? "Stop & send (Ctrl+/)" : "Start voice (Ctrl+/)";
+		const label = recording ? "Stop & send (Ctrl+Space)" : "Start voice (Ctrl+Space)";
 		const svg = createElement(recording ? Square : Mic);
 		svg.setAttribute("width", "18");
 		svg.setAttribute("height", "18");
