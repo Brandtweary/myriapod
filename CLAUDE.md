@@ -30,7 +30,8 @@ endpoints (both configurable, both on one origin in production behind TLS):
 
 - **The voice cascade** — a WebSocket to the Kyutai Unmute stack, spoken in the OpenAI Realtime
   dialect (WS path `/api/v1/realtime`, subprotocol `realtime`). STT → open-weight LLM → TTS all run
-  server-side; server-side VAD segments turns. Configured via `VITE_CASCADE_URL`.
+  server-side; the client owns the turn boundary — the mic toggle-off commits the turn and fires the
+  reply (no server-side VAD; see the cascade fork). Configured via `VITE_CASCADE_URL`.
 - **The LLM endpoint** — a self-hosted OpenAI-compatible server (vLLM-style) at the `/llm/v1` path,
   serving a single open-weight model. Used by **typed chat** (text in, streamed text out, no TTS) and
   by **personal-graph ingestion**. Configured via `VITE_LLM_BASE`.
@@ -57,8 +58,10 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
     memory-consent state, and session management.
   - **cascade.ts** — `CascadeSession`: the WebSocket client for the Unmute voice cascade. opus-recorder
     mic capture → `input_audio_buffer.append`; `response.audio.delta` Opus packets → decode →
-    AudioWorklet playback. Surfaces user + assistant transcript deltas and the VAD `speech_stopped`
-    signal via callbacks. `updateInstructions()` is the seam the KG layer uses to (re)inject context.
+    AudioWorklet playback. Surfaces user + assistant transcript deltas via callbacks. `commitTurn()`
+    ends the user's turn (flush the recorder, send `input_audio_buffer.commit` → the server flushes STT
+    and generates); `stopTts()` cuts the reply mid-utterance (barge-in / "shut up"); `updateInstructions()`
+    is the seam the KG layer uses to (re)inject context.
   - **cymbiont-model.ts** — the single hardcoded chat model: provider id `cymbiont`, `baseUrl` from
     `VITE_LLM_BASE`, reasoning off, zero cost. A throwaway bearer is seeded into the provider key slot
     so pi-web-ui's pre-send key check passes (the local server ignores it).
@@ -88,7 +91,7 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
       with per-session ledger dedup and assembles the `<kg-context>` injection block. `assembleKgContext`
       is shared so the voice pool renders the identical format.
     - **retrieval-pool.ts** — `RetrievalPool`: the voice working-memory layer. Decaying recency set,
-      hit-count TTL, capped, re-rendered whole each VAD turn.
+      hit-count TTL, capped, re-rendered whole each turn.
     - **ingest.ts** · **extraction-prompts.ts** — per-turn personal-graph ingestion (LLM extraction →
       tolerant parse → upsert-by-label + orphan-drop + clause merge + expirations). `makeCompletion`
       is an endpoint-agnostic OpenAI-compatible completion seam.
@@ -114,9 +117,9 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
     breadcrumb to `agent.state.messages`. The breadcrumb accumulates across turns (like Claude Code's
     `additionalContext`), so a per-session **ledger** dedup is correct rather than lossy. The gutters
     deliberately show the pre-dedup vacuum (the "small lie" — what *would* retrieve this turn).
-  - **Voice (recency pool).** Unmute's `updateInstructions` REPLACES the system prompt every VAD turn,
+  - **Voice (recency pool).** Unmute's `updateInstructions` REPLACES the system prompt every turn,
     so anything not re-asserted vanishes. The voice path therefore keeps a decaying **recency pool**
-    (`retrieval-pool.ts`) and re-injects the whole pool each turn. Entries decay by a hit-count TTL
+    (`retrieval-pool.ts`) and re-injects the whole pool each turn (on toggle-off, just before the commit). Entries decay by a hit-count TTL
     (recurring concepts persist, one-offs fade); caps are 12 terms / 15 triples. The gutters mirror
     the pool, not just this turn's hits.
 - **Injection verification.** `cascade.ts` logs the `response.created` event's `chat_history[0]` (the
@@ -125,8 +128,8 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
 - **Opt-in memory.** Nothing is ingested until the visitor grants consent. The modal fires once on the
   first interaction; the choice persists in IndexedDB and is toggleable in Settings → Memory.
 - **Debounced, batched, serialized ingestion.** Ingestion does NOT fire per turn. Exchanges accumulate
-  and flush as one extraction once the conversation has been quiet for ~15s (a VAD pause between turns
-  is not the end; sustained silence is). The memory button force-flushes immediately. Two extractions
+  and flush as one extraction once the conversation has been quiet for ~15s (a single turn ending is not
+  the end of the conversation; sustained silence is). The memory button force-flushes immediately. Two extractions
   never run at once — a flush that lands mid-run is honored when the current one finishes.
 - **depluralization** is the one always-on normalization (strips spoken S-plurals so "knowledge
   graphs" hits the singular node). Porter stemming is opt-in and effectively unused.

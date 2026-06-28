@@ -20,7 +20,9 @@ declare module "opus-recorder" {
 	export default class Recorder {
 		constructor(options: RecorderOptions);
 		start(): void;
-		stop(): void;
+		// Resolves after the encoder flushes its final page (a last ondataavailable);
+		// await it so the trailing audio is sent before we commit the turn.
+		stop(): Promise<void>;
 		ondataavailable: (data: Uint8Array) => void;
 		encodedSamplePosition: number;
 	}

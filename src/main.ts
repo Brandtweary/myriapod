@@ -1035,13 +1035,14 @@ async function initApp() {
 	renderGutters(); // initial empty state
 
 	// Voice capture → Unmute cascade. The mic toggle opens a streaming session to
-	// the voice stack (STT → LLM → TTS); within the session, server-side VAD segments
-	// turns. Spoken user + assistant transcripts are appended to the chat as they
-	// stream — voice bypasses agent.prompt(), so we drive the message list directly.
+	// the voice stack (STT → LLM → TTS); the mic toggle also defines each turn —
+	// toggle-off commits the turn and fires the response (no server VAD). Spoken user +
+	// assistant transcripts are appended to the chat as they stream — voice bypasses
+	// agent.prompt(), so we drive the message list directly.
 	let cascade: CascadeSession | undefined;
 	// Voice KG working memory: a fresh recency pool per voice conversation. Unlike
 	// the text path's accumulating ledger, this decaying set is re-injected whole
-	// each VAD turn (updateInstructions replaces the system prompt). Reset when a
+	// each turn (updateInstructions replaces the system prompt). Reset when a
 	// new cascade opens.
 	let voicePool = new RetrievalPool();
 	// Which role the in-progress voice message belongs to; a role switch starts a
@@ -1109,11 +1110,11 @@ How you are:
 		return "";
 	};
 
-	// User finished a turn (VAD speech_stopped): retrieve over the personal graph,
-	// paint the gutters, and inject the <kg-context> into the cascade's server-side
-	// LLM via session.update. NOTE: whether this lands in the SAME turn or the next
-	// depends on Unmute's LLM-call timing relative to speech_stopped — UNVERIFIED
-	// (the taskpad spike); confirm at the feel test. It's additive either way.
+	// User finished a turn (mic toggle-off): retrieve over the personal graph, paint
+	// the gutters, and inject the <kg-context> into the cascade's server-side LLM via
+	// session.update. Called from onStop BEFORE commitTurn(), so the injected context
+	// is in the system prompt the server holds when the commit fires generation
+	// (session.update and the commit travel the same WS in order).
 	const onVoiceUserTurnEnd = () => {
 		try {
 			if (!cascade) return;
@@ -1192,6 +1193,7 @@ How you are:
 			// safe to reuse — no stale-socket teardown.)
 			if (cascade?.isLive()) {
 				stream.getTracks().forEach((t) => t.stop()); // probe stream is redundant
+				cascade.stopTts(); // barge-in: toggling the mic on cuts off any in-progress reply
 				cascade.startRecording();
 				return;
 			}
@@ -1200,7 +1202,6 @@ How you are:
 				{
 					onUserTranscript: (d) => appendVoiceTranscript("user", d),
 					onAssistantTranscript: (d) => appendVoiceTranscript("assistant", d),
-					onSpeechStopped: () => onVoiceUserTurnEnd(),
 					onResponseStart: () => {
 						agentResponding = true;
 					},
@@ -1212,13 +1213,25 @@ How you are:
 			);
 			await cascade.start(stream);
 		},
-		// Mic toggle OFF = stop recording (WS stays live so the bot finishes its reply).
-		// This is the conversation pause: arm ingestion once the agent is done responding.
+		// Mic toggle OFF = end of turn. Inject the KG context, then commit: the server
+		// flushes the STT and generates. The WS stays live so the reply streams back.
+		// Ingestion is NOT armed here — toggle-off always triggers a response now, so
+		// onVoiceResponseDone owns the arming (once the reply completes and mic is off).
 		onStop: () => {
-			cascade?.stopRecording();
 			micOn = false;
-			if (!agentResponding) armIngestDebounce();
+			onVoiceUserTurnEnd(); // inject <kg-context> (sync) before the commit below
+			void cascade?.commitTurn();
 		},
+	});
+
+	// Ctrl+Alt+Space = "shut up": cut the assistant's TTS without recording. (Ctrl+Space,
+	// the mic toggle, also barges in — it cuts TTS on its way to recording, see onStart.)
+	// The guard mirrors voice.ts's Ctrl+Space (which requires !altKey), so they never collide.
+	window.addEventListener("keydown", (e) => {
+		if (e.code === "Space" && e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey) {
+			e.preventDefault();
+			cascade?.stopTts();
+		}
 	});
 
 	// Close the cascade WS on page unload so we don't leak the stack's single-tenant slot.

@@ -40,8 +40,6 @@ export type CascadeCallbacks = {
 	onAssistantTranscript?: (delta: string) => void;
 	// Lifecycle: idle → connecting → live → closed (or error).
 	onState?: (state: CascadeState) => void;
-	// A pause was detected (server VAD) — the user finished a turn. Optional UI hook.
-	onSpeechStopped?: () => void;
 	// The assistant began generating a response (the server started the LLM turn).
 	onResponseStart?: () => void;
 	// The assistant's response text is complete (the turn's answer is fully generated).
@@ -160,16 +158,33 @@ export class CascadeSession {
 		this.setState("closed");
 	}
 
-	// Stop the mic recorder WITHOUT touching the conversation: the WebSocket and audio
-	// playback stay live, so the bot can still finish or produce a turn (VAD-driven). This
-	// is what the mic toggle binds to — "stop recording", not "end conversation".
-	stopRecording(): void {
+	// End the user's turn (cymbiont fork): the mic toggled off. Server VAD no longer
+	// ends turns, so we flush the recorder — awaiting its final page so the trailing
+	// words are SENT before the commit (otherwise they're lost: the transcript race) —
+	// then send input_audio_buffer.commit, which makes the backend flush the STT and
+	// generate. The WebSocket and playback stay live (the conversation continues).
+	async commitTurn(): Promise<void> {
+		this.recording = false;
 		try {
-			this.recording = false;
-			this.pipeline?.opusRecorder.stop();
-			dbg("[cascade] recording stopped (mic released; conversation stays live)");
+			await this.pipeline?.opusRecorder.stop();
 		} catch (err) {
-			dbg(`[cascade] stopRecording: ${String(err)}`);
+			dbg(`[cascade] commitTurn: recorder stop ${String(err)}`);
+		}
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			this.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+			dbg("[cascade] -> input_audio_buffer.commit (turn committed)");
+		}
+	}
+
+	// Cut the assistant's TTS mid-utterance without touching the WebSocket or mic:
+	// clears the audio output worklet's frame buffer (barge-in / "shut up"). The
+	// conversation stays live; the next response plays normally.
+	stopTts(): void {
+		try {
+			this.pipeline?.outputWorklet.port.postMessage({ type: "reset" });
+			dbg("[cascade] TTS cut (output buffer cleared)");
+		} catch (err) {
+			dbg(`[cascade] stopTts: ${String(err)}`);
 		}
 	}
 
@@ -410,9 +425,6 @@ export class CascadeSession {
 				// TTS text omits leading spaces; add one so words don't run together.
 				if (data.delta) this.cb.onAssistantTranscript?.(" " + data.delta);
 				return;
-			case "input_audio_buffer.speech_stopped":
-				this.cb.onSpeechStopped?.();
-				return;
 			case "response.created": {
 				// Injection verification: response.created carries the full chat_history
 				// the server is about to send to the LLM; chat_history[0] is the system
@@ -446,7 +458,8 @@ export class CascadeSession {
 			}
 			default:
 				// session.updated, response.done, audio.done, speech_started,
-				// unmute.* readiness pings — nothing to do.
+				// speech_stopped (the server still emits it on commit, but the client
+				// drives the turn now), unmute.* readiness pings — nothing to do.
 				return;
 		}
 	}
