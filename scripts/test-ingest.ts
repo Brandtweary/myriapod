@@ -1,7 +1,7 @@
 // Unit tests for the ingestion pipeline (Slice 3) — tolerant parse + truncation
 // salvage, the _handle_ingest apply control flow (orphan reject / clause-merge
 // gate / expiration), and the text helpers. Network completion is verified live.
-// Run from cymbiont-web/:  node_modules/.bin/tsx scripts/test-ingest.ts
+// Run from cymbiont/:  node_modules/.bin/tsx scripts/test-ingest.ts
 
 import { Graph } from "../src/kg/graph.ts";
 import {

@@ -855,8 +855,9 @@ const renderAbout = () => html`
 			<h1 class="text-2xl font-semibold text-primary">About Cymbiont</h1>
 			<p class="text-sm text-muted-foreground">Placeholder — a fuller write-up is coming.</p>
 			<p class="text-sm leading-relaxed">
-				Cymbiont is a self-maintaining knowledge-graph memory harness for LLM agents. This site is
-				a lightweight, hosted demo of it. The full harness (Linux + Hyprland) lives on GitHub:
+				Cymbiont is a browser-local voice agent with a self-maintaining knowledge-graph memory
+				layer for LLM agents — speak or type, and a personal knowledge graph grows in your own
+				browser from the conversation. The source lives on GitHub:
 			</p>
 			<a
 				class="text-primary underline break-all text-sm"

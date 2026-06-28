@@ -1,6 +1,6 @@
 // Lightweight browser instrumentation. Every message logs to the devtools
 // console (prefixed `[cymbiont]`, neon green) AND, in dev, ships to the Vite
-// dev server's /__log endpoint, which appends it to /tmp/cymbiont-web-debug.log
+// dev server's /__log endpoint, which appends it to /tmp/cymbiont-debug.log
 // so the coding agent can read it without copy-paste. See debugLogPlugin in
 // vite.config.ts. Disabled automatically in production builds.
 

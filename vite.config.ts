@@ -6,7 +6,7 @@ import { defineConfig, type Plugin } from "vite";
 // coding agent can read directly (no copy-paste from the console). The browser
 // side lives in src/debug.ts. Disabled automatically in production builds (the
 // middleware only registers on the dev server).
-const DEBUG_LOG_FILE = "/tmp/cymbiont-web-debug.log";
+const DEBUG_LOG_FILE = "/tmp/cymbiont-debug.log";
 function debugLogPlugin(): Plugin {
 	return {
 		name: "cymbiont-debug-log",

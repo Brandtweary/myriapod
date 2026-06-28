@@ -1,7 +1,6 @@
-# Cymbiont Web
+# Cymbiont
 
-A browser-local **voice agent demo** of [Cymbiont](https://github.com/Brandtweary/cymbiont) — the public, openable artifact for a Linux-only
-harness no hiring manager will ever clone. The thesis:
+A browser-local **voice agent** — the public, openable artifact. The thesis:
 sovereign, browser-local AI memory running over an **open, self-hostable inference stack**. You talk
 to it (or type), it answers, and a personal knowledge graph grows in your own browser from the
 conversation — every turn shows the matched nodes and triples in gutters beside the chat, so the
