@@ -31,8 +31,11 @@ export interface CompletionOpts {
 }
 
 /** Build a one-shot, non-streaming completion against an OpenAI-compatible
- *  endpoint. Thinking is disabled server-side, so `message.content` is clean JSON
- *  with no separate reasoning field to strip. */
+ *  endpoint. Reasoning is disabled explicitly (`reasoning: { enabled: false }`):
+ *  the chat model is GLM-over-OpenRouter, which thinks by default — wasteful and
+ *  JSON-corrupting for a structured extraction job. OpenRouter honors the field;
+ *  endpoints that don't simply ignore it. So `message.content` is clean JSON with
+ *  no separate reasoning field to strip. */
 export function makeCompletion(opts: CompletionOpts): CompletionFn {
 	return async (messages) => {
 		const res = await fetch(`${opts.baseUrl}/chat/completions`, {
@@ -45,6 +48,7 @@ export function makeCompletion(opts: CompletionOpts): CompletionFn {
 				model: opts.model,
 				messages,
 				stream: false,
+				reasoning: { enabled: false },
 			}),
 		});
 		if (!res.ok) {

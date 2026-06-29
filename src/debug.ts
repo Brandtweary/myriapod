@@ -53,7 +53,7 @@ export function dbgError(...args: unknown[]): void {
 	ship("ERROR", args);
 }
 
-// Globally patch console so EVERY console.* (our raw calls, cascade.ts, library
+// Globally patch console so EVERY console.* (our raw calls, library
 // noise) mirrors to the dev log file — not just the explicit dbg* helpers. Each
 // override calls the saved original (real devtools output) then ships once. Wrapped
 // so a ship failure can never break a real console call. Dev-only.

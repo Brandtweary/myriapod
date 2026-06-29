@@ -84,12 +84,14 @@ class AudioOutputProcessor extends AudioWorkletProcessor {
           }
         }
         debug(this.timestamp(), "Packet dropped", asMs(this.currentSamples()));
-        this.maxBufferSamples += this.maxBufferSamplesIncrement;
-        this.maxBufferSamples = Math.min(
-          this.maxMaxBufferWithIncrements,
-          this.maxBufferSamples
-        );
-        debug("Increased maxBuffer to", asMs(this.maxBufferSamples));
+        // The upstream Unmute worklet grew maxBufferSamples toward an 80ms cap
+        // (maxMaxBufferWithIncrements) here. That assumes a buffer that STARTS
+        // small; ours starts at a 30s ceiling, so Math.min(80ms, 30s) collapsed
+        // the ceiling to 80ms on the very first overflow and then dropped almost
+        // every subsequent frame. We keep the 30s ceiling firm. The real fix for
+        // moshi's faster-than-realtime burst is the client-side pacing in tts.ts,
+        // which keeps the buffer far below this threshold so this branch should
+        // not fire at all.
       }
       this.port.postMessage({
         totalAudioPlayed: this.totalAudioPlayed,
@@ -196,11 +198,11 @@ class AudioOutputProcessor extends AudioWorkletProcessor {
         this.offsetInFirstBuffer + to_copy
       );
       output.set(subArray, out_idx);
-      anyAudio =
-        anyAudio ||
-        output.some(function (x) {
-          x > 1e-4 || x < -1e-4;
-        });
+      // Did this chunk carry real (non-silence) audio? The upstream callback had
+      // no `return`, so .some() was always false — making the underrun branch
+      // below fire on every block, including benign end-of-turn zero padding.
+      // Check the freshly copied chunk and actually return the predicate.
+      anyAudio = anyAudio || subArray.some((x) => x > 1e-4 || x < -1e-4);
       this.offsetInFirstBuffer += to_copy;
       out_idx += to_copy;
       if (this.offsetInFirstBuffer == first.length) {
@@ -214,9 +216,9 @@ class AudioOutputProcessor extends AudioWorkletProcessor {
         output[i] *= i / out_idx;
       }
     }
-    if (out_idx < output.length && !anyAudio) {
+    if (out_idx < output.length && anyAudio) {
       // At the end of a turn, we will get some padding of 0, so we only
-      // incease the buffer if we got some audio, e.g. we truly lagged in the middle of something.
+      // increase the buffer if we got some audio, e.g. we truly lagged in the middle of something.
       debug(this.timestamp(), "Missed some audio", output.length - out_idx);
       this.partialBufferSamples += this.partialBufferIncrement;
       this.partialBufferSamples = Math.min(

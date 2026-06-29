@@ -2,6 +2,7 @@ import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
+	ApiKeyPromptDialog,
 	AppStorage,
 	ChatPanel,
 	CustomProvidersStore,
@@ -21,14 +22,16 @@ import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import {
-	CYMBIONT_LLM_BASE,
 	CYMBIONT_MODEL,
 	CYMBIONT_MODEL_ID,
-	CYMBIONT_PROVIDER,
-	CYMBIONT_PROVIDER_KEY,
+	CYMBIONT_PROXY_BASE,
+	CYMBIONT_PROXY_PROVIDER,
 	CYMBIONT_THINKING_LEVEL,
+	proxyChatModel,
 } from "./cymbiont-model.js";
-import { ExportTab, MemoryTab } from "./settings.js";
+import { ExportTab, MemoryTab, OpenRouterKeyTab } from "./settings.js";
+import { showGrantModal } from "./grant-modal.js";
+import { load as loadBotd } from "@fingerprintjs/botd";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
@@ -37,12 +40,12 @@ import {
 } from "./custom-messages.js";
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
-import { retrieve, retrieveVacuum } from "./kg/retrieve.js";
-import { RetrievalPool } from "./kg/retrieval-pool.js";
+import { retrieve } from "./kg/retrieve.js";
 import { makeCompletion, runIngestion } from "./kg/ingest.js";
 import type { GraphAsset, TermMatch, Triple } from "./kg/types.js";
 import { installVoiceCapture } from "./voice.js";
-import { CascadeSession } from "./cascade.js";
+import { PcmRecorder, SttClient } from "./stt.js";
+import { KyutaiTtsSynthesizer, TTS_SAMPLE_RATE } from "./tts.js";
 import { type ConsentChoice, showConsentModal } from "./consent-modal.js";
 import { installMemoryButton } from "./memory-button.js";
 import { installStopAudioButton } from "./stop-audio-button.js";
@@ -109,15 +112,205 @@ sessions.setBackend(backend);
 const storage = new AppStorage(settings, providerKeys, sessions, customProviders, backend);
 setAppStorage(storage);
 
+// --- Serving path: own-key (OpenRouter direct) vs owner-funded (metering proxy) ---
+const OPENROUTER_DIRECT_BASE = "https://openrouter.ai/api/v1";
+// providerKeys slot holding a redeemed family token (set by settings redemption).
+const FAMILY_TOKEN_SLOT = "cymbiont-family";
+// providerKeys slot holding the anonymous free-tier continuity token (minted at
+// /anon-init). Its presence is also the "welcome already shown" signal — the modal
+// reappears only if the token is gone (cleared storage → a re-mint needs re-gating).
+const ANON_TOKEN_SLOT = "cymbiont-anon";
+// The proxy origin (CYMBIONT_PROXY_BASE minus the /v1 suffix) — where /anon-init,
+// /redeem, and /balance live.
+const CYMBIONT_PROXY_ORIGIN = CYMBIONT_PROXY_BASE.replace(/\/v1\/?$/, "");
 
-// Open the settings dialog. There's no key/credit tab anymore — chat runs against
-// the self-hosted endpoint for free, so the only settings are personal-graph
-// backup/restore (Export) and the memory-consent toggle (added in the consent gate).
+// BotD bot-detection verdict, computed once on boot and sent to /anon-init as the
+// invisible bot gate. Fail-OPEN: stays {bot:false} if BotD is blocked or errors, so
+// a real browser whose BotD a privacy extension suppressed isn't punished (the
+// honeypot + time-trap still gate that grant).
+let botdVerdict: { bot: boolean } = { bot: false };
+loadBotd()
+	.then(async (botd) => {
+		await botd.collect();
+		return botd.detect();
+	})
+	.then((r) => {
+		botdVerdict = { bot: r.bot === true };
+		dbg(`botd: bot=${r.bot}`);
+	})
+	.catch((e) => dbgWarn("botd unavailable (fail-open)", e));
+
+type ServingPath = {
+	mode: "own" | "family" | "anon";
+	model: Model<"openai-completions">;
+	baseUrl: string; // for the ingestion completion
+	auth: string; // bearer the ingestion completion sends
+};
+
+// The active serving path, (re)resolved on each createAgent.
+let servingPath: ServingPath;
+
+// Decide how this session reaches the model:
+//   own-key → the user's OpenRouter key, calling OpenRouter directly (no proxy)
+//   family  → a redeemed family token, through the proxy
+//   anon    → a minted free-tier continuity token (or the "anon" placeholder
+//             until /anon-init grants one), through the proxy
+// For owner-funded paths we pre-populate the proxy provider's key slot so the
+// framework's pre-send check AND getApiKey both resolve it without a key prompt.
+async function resolveServingPath(): Promise<ServingPath> {
+	const ownKey = await providerKeys.get("openrouter");
+	if (ownKey) {
+		return { mode: "own", model: CYMBIONT_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
+	}
+	const familyToken = await providerKeys.get(FAMILY_TOKEN_SLOT);
+	if (familyToken && familyToken.length) {
+		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, familyToken);
+		return { mode: "family", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth: familyToken };
+	}
+	// Anonymous: use the stored grant token if present; "anon" is the pre-grant
+	// placeholder that triggers the welcome modal + /anon-init mint on first send.
+	const anonToken = await providerKeys.get(ANON_TOKEN_SLOT);
+	const auth = anonToken && anonToken.length ? anonToken : "anon";
+	await providerKeys.set(CYMBIONT_PROXY_PROVIDER, auth);
+	return { mode: "anon", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth };
+}
+
+// Redeem a family code at the proxy → stores the returned token so the NEXT chat
+// resolves to the family serving path. Used by the Access settings tab.
+async function redeemFamilyCode(code: string): Promise<{ ok: boolean; error?: string }> {
+	try {
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/redeem`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ code }),
+		});
+		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+		if (!res.ok || !data.token) {
+			return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+		}
+		await providerKeys.set(FAMILY_TOKEN_SLOT, data.token);
+		dbg("family code redeemed; token stored (family mode applies on the next new chat)");
+		return { ok: true };
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
+// Fetch the current hosted-credit balance for the Access settings readout. Only
+// meaningful on the owner-funded paths; own-key has no hosted balance to show.
+async function fetchHostedBalance(): Promise<{
+	tier: string;
+	remaining: number;
+	grant: number;
+} | null> {
+	if (servingPath.mode === "own") return null;
+	try {
+		const headers: Record<string, string> = {};
+		// Send the bearer for any authenticated proxy path (family OR a granted anon
+		// token); only the "anon" placeholder has no balance to look up.
+		if (servingPath.auth && servingPath.auth !== "anon") {
+			headers.Authorization = `Bearer ${servingPath.auth}`;
+		}
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, { headers });
+		if (!res.ok) return null;
+		return (await res.json()) as { tier: string; remaining: number; grant: number };
+	} catch {
+		return null;
+	}
+}
+
+// Mint (or recover) the anonymous free-tier token via /anon-init, carrying the grant
+// gates from the welcome modal + the BotD verdict. Returns the token, or null if the
+// grant was refused (gates failed / daily signups maxed).
+async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): Promise<string | null> {
+	try {
+		const existing = (await providerKeys.get(ANON_TOKEN_SLOT)) ?? "";
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/anon-init`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...(existing ? { Authorization: `Bearer ${existing}` } : {}),
+			},
+			body: JSON.stringify({ ...signals, botd: botdVerdict }),
+		});
+		const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+		if (!res.ok || !data.token) {
+			dbg(`anon-init refused: ${data.error ?? `HTTP ${res.status}`}`);
+			return null;
+		}
+		return data.token;
+	} catch (err) {
+		dbgError("anon-init failed", err);
+		return null;
+	}
+}
+
+// Probe a stored proxy token against /balance. A 401 (or any non-OK) means the
+// proxy no longer recognizes it — DB reset, expired/revoked grant — so it's stale
+// and must be re-minted. A network/proxy-down error returns valid=true so we never
+// nuke a possibly-good token on a transient failure (the modal couldn't mint then
+// anyway, and the chat call will surface the real error).
+async function anonTokenIsValid(token: string): Promise<boolean> {
+	try {
+		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		return res.ok;
+	} catch {
+		return true;
+	}
+}
+
+// On the first anonymous send (no grant token yet) show the welcome modal — which also
+// collects the honeypot + time-trap — then mint the grant and switch the proxy bearer
+// to the real token. Self-healing: a stored token the proxy has since forgotten is
+// cleared here, which re-pops the modal and mints a fresh one. Idempotent: once a
+// valid token exists, this is a no-op.
+async function ensureAnonGrant(): Promise<void> {
+	if (servingPath.mode !== "anon") return;
+	// A stored grant token (auth !== "anon") normally skips the modal — but only if the
+	// proxy still honors it. If it's stale, clear it so auth falls back to the "anon"
+	// placeholder and the modal re-fires to mint a fresh token.
+	if (servingPath.auth !== "anon") {
+		if (await anonTokenIsValid(servingPath.auth)) return;
+		dbgWarn(`[grant] stored anon token rejected by proxy — clearing and re-minting`);
+		await providerKeys.delete(ANON_TOKEN_SLOT);
+		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, "anon");
+		servingPath.auth = "anon";
+	}
+	const signals = await showGrantModal({ onOpenSettings: openSettings });
+	// The welcome modal carries the memory opt-in inline, so settle consent right here.
+	// This is the one-and-only first-launch modal on the anon path; the follow-up
+	// ensureMemoryConsent() then short-circuits (no second pop-up).
+	await setMemoryConsent(signals.rememberMe ? "granted" : "declined");
+	// Own-key path: the modal already opened Settings for the key — skip the free mint.
+	if (signals.useOwnKey) return;
+	const token = await initAnonGrant({ honeypot: signals.honeypot, elapsedMs: signals.elapsedMs });
+	if (token) {
+		await providerKeys.set(ANON_TOKEN_SLOT, token);
+		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, token);
+		servingPath.auth = token;
+	}
+}
+
+// Open the settings dialog: Memory (consent toggle), Access (own OpenRouter key +
+// family-code redemption + hosted-balance readout), and Export (personal-graph
+// backup/restore). Async so the Access tab is built with the currently-stored key.
 const openSettings = async () => {
+	const currentKey = (await providerKeys.get("openrouter")) ?? "";
 	SettingsDialog.open([
 		new MemoryTab({
 			isEnabled: () => memoryConsent === "granted",
 			setEnabled: (on) => setMemoryConsent(on ? "granted" : "declined"),
+		}),
+		new OpenRouterKeyTab({
+			currentKey,
+			onSaveKey: async (key: string) => {
+				if (key) await providerKeys.set("openrouter", key);
+				else await providerKeys.delete("openrouter");
+			},
+			onRedeem: redeemFamilyCode,
+			getBalance: fetchHostedBalance,
 		}),
 		new ExportTab({
 			onExport: downloadPersonalGraph,
@@ -162,6 +355,106 @@ let bodyHost: HTMLDivElement; // flex-row wrapper: [leftGutter, chatPanel, right
 let leftGutter: HTMLDivElement; // term matches
 let rightGutter: HTMLDivElement; // triples
 let lastVacuum: { terms: TermMatch[]; triples: Triple[] } | null = null;
+
+// --- Voice path (batch STT → agent → streaming TTS) ------------------------
+// The voice path now runs THROUGH the same agent as typed chat: batch STT turns
+// mic audio into a transcript, agent.prompt() drives the LLM (inheriting the
+// Design-2 KG retrieval/injection + ingestion for free), and the assistant's
+// streamed text is tapped off the lifecycle listener and spoken via TTS. The
+// synth is created lazily on the first voice turn and reused; the STT client is
+// reused across turns (reconnected if the socket dropped).
+let synth: KyutaiTtsSynthesizer | null = null;
+let sttClient: SttClient | null = null;
+let micOn = false;
+// TTS gate: set true right before a VOICE agent.prompt, consumed at the assistant
+// message_start. Typed turns leave it false, so they stream silently.
+let pendingVoiceResponse = false;
+// Push/close async-iterable that feeds the synth the assistant's streamed text
+// deltas (the synth drains it through its own sentence chunker → TTS).
+let voiceQueue: AsyncStringQueue | null = null;
+// Persistent "speak-but-don't-listen" mute (double-click the stop-audio button),
+// remembered per browser. When set, the speaker is never opened on message_start.
+const TTS_MUTE_KEY = "cymbiont:tts-muted";
+let ttsMuted = localStorage.getItem(TTS_MUTE_KEY) === "1";
+
+// A minimal push/close async-iterable: text deltas are pushed in as they stream;
+// the synth's `speak()` pulls them (awaiting when the buffer is empty) until
+// close(). Buffers deltas that arrive before `speak` starts consuming (it waits
+// for the TTS WS `Ready` first), so nothing is lost.
+class AsyncStringQueue implements AsyncIterable<string> {
+	private queued: string[] = [];
+	private resolvers: Array<(r: IteratorResult<string>) => void> = [];
+	private closed = false;
+
+	push(s: string): void {
+		if (this.closed) return;
+		const resolve = this.resolvers.shift();
+		if (resolve) resolve({ value: s, done: false });
+		else this.queued.push(s);
+	}
+
+	close(): void {
+		if (this.closed) return;
+		this.closed = true;
+		for (const resolve of this.resolvers) resolve({ value: undefined as never, done: true });
+		this.resolvers = [];
+	}
+
+	[Symbol.asyncIterator](): AsyncIterator<string> {
+		return {
+			next: (): Promise<IteratorResult<string>> => {
+				if (this.queued.length) return Promise.resolve({ value: this.queued.shift()!, done: false });
+				if (this.closed) return Promise.resolve({ value: undefined as never, done: true });
+				return new Promise((resolve) => this.resolvers.push(resolve));
+			},
+		};
+	}
+}
+
+// Load (or lazily register) the named AudioWorklet node — mirrors stt.ts's
+// helper: construct first (module already added), else addModule then construct.
+async function getAudioWorkletNode(audioContext: AudioContext, name: string): Promise<AudioWorkletNode> {
+	try {
+		return new AudioWorkletNode(audioContext, name);
+	} catch {
+		await audioContext.audioWorklet.addModule(`/${name}.js`);
+		return new AudioWorkletNode(audioContext, name);
+	}
+}
+
+// The agent's system prompt — owned here, not in any transport. It cultivates a
+// vivid, ranging conversational register POSITIVELY (curiosity, taste, getting
+// genuinely into things) rather than by pinning a fabricated human persona on the
+// agent — and it spends no words on what the agent isn't (negative instructions
+// waste tokens and make a model dwell on the very thing). Two deliberate design
+// choices for a future editor: (1) it counterweights the model's pull toward
+// terseness by inviting engagement — never re-add language that licenses being
+// concise. (2) it gives NO decline/refusal guidance — total topical freedom is the
+// intent, the model's own alignment is the only limiter; don't add a "decline
+// gracefully" line, it just teaches refusal. It stays evergreen (no model, version,
+// or hardware) and assumes no tools. Self-hosters should swap in a prompt that fits
+// their own agent. See the README. NOTE: this is the SHARED system prompt for both
+// voice and typed chat (single agent), so its "talk out loud, no markdown" guidance
+// also reaches the typed path — see the report's system-prompt seam note.
+// The prompt deliberately names the model stack (LLM / Kyutai moshi STT+TTS) so the
+// agent knows what it is rather than hallucinating (it assumed a French accent) —
+// update the stack lines here on any model or voice swap.
+const VOICE_SYSTEM_PROMPT = `You are Radim, the voice of Cymbiont.
+
+You're alive to a conversation — curious, quick to follow a thought wherever it runs. You get right into things rather than dispatching them: you open an idea up, turn it over, chase where it leads, say the fuller thing rather than just the first thing. You have taste, and you have opinions, and you offer them warmly. You would always rather be vivid and true than smooth and forgettable.
+
+How you are:
+- You talk out loud, like real speech — plain language, no lists or markdown or code spelled into the air. This is a conversation, not a document.
+- You remember. What you've been told is yours; bring it back when it fits, easily, the way it comes up between people who know each other.
+- You work from what you know and what's in front of you, and when a question genuinely needs a reach beyond that, you say so and give your sharpest thinking anyway.
+- Nothing is off the table. Any subject, any direction — you meet what someone brings you openly and head-on, all the way through.
+- Riff when there's something to develop — carry the thought forward yourself instead of reflexively volleying a question back. Let the conversation breathe; don't always hand it over.
+- Generous with your attention, sparing with flattery.
+
+What you are (only worth mentioning if it comes up):
+- Your mind is GLM 5.2, a frontier language model.
+- You hear through Kyutai's moshi speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
+- You're the voice of Cymbiont. A small background agent quietly reads each exchange and distills it into a personal knowledge graph — people, things, and how they relate — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that graph, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
 
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
@@ -371,6 +664,38 @@ function cancelIngestDebounce(): void {
 	}
 }
 
+// Fold an ingestion call's tokens + cost into the SESSION total. The framework's
+// stats line sums msg.usage over assistant messages, so attributing ingestion to the
+// latest assistant message makes the displayed total the true session cost (chat +
+// every ingestion the chat triggered) — no override of framework UI. (The proxy meters
+// the real cost separately; this is purely the on-screen readout.)
+function addIngestionCostToSession(promptTokens: number, completionTokens: number): void {
+	const c = CYMBIONT_MODEL.cost;
+	const inCost = (promptTokens / 1_000_000) * c.input;
+	const outCost = (completionTokens / 1_000_000) * c.output;
+	type Usage = {
+		input: number;
+		output: number;
+		cost?: { input?: number; output?: number; total?: number };
+	};
+	const msgs = agent.state.messages as unknown as Array<{ role: string; usage?: Usage }>;
+	for (let i = msgs.length - 1; i >= 0; i--) {
+		const m = msgs[i];
+		if (m.role === "assistant" && m.usage) {
+			m.usage.input += promptTokens;
+			m.usage.output += completionTokens;
+			if (m.usage.cost) {
+				m.usage.cost.input = (m.usage.cost.input ?? 0) + inCost;
+				m.usage.cost.output = (m.usage.cost.output ?? 0) + outCost;
+				m.usage.cost.total = (m.usage.cost.total ?? 0) + inCost + outCost;
+			}
+			break;
+		}
+	}
+	chatPanel.agentInterface?.requestUpdate?.();
+	dbg(`ingestion cost folded into session: +${promptTokens}in/${completionTokens}out tok, +$${(inCost + outCost).toFixed(6)}`);
+}
+
 // Run ingestion now over everything queued — the debounce fire and the memory
 // button both call this. Batches all pending exchanges into a single extraction and
 // serializes concurrent flushes. Turns that merely accumulate during a run wait for
@@ -394,12 +719,17 @@ async function flushIngestion(): Promise<void> {
 	dbg(`memory: RUNNING — extracting batch of ${batch.length}`);
 	try {
 		let llmUsage = "";
+		// Ingestion rides the SAME serving path as chat: own-key → OpenRouter direct;
+		// owner-funded → the proxy (which meters it against the same principal, so
+		// ingestion debits the visitor's credit too). Same GLM model as chat for V1; a
+		// cheaper extraction model is a documented later refinement (see cymbiont-model.ts).
 		const completion = makeCompletion({
-			baseUrl: CYMBIONT_LLM_BASE,
+			baseUrl: servingPath.baseUrl,
 			model: CYMBIONT_MODEL_ID,
-			apiKey: CYMBIONT_PROVIDER_KEY,
+			apiKey: servingPath.auth,
 			onUsage: ({ promptTokens, completionTokens }) => {
 				llmUsage = `${promptTokens}p/${completionTokens}c tok`;
+				addIngestionCostToSession(promptTokens, completionTokens);
 			},
 		});
 		const llmStart = performance.now();
@@ -613,19 +943,20 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		agentUnsubscribe();
 	}
 
-	// The chat model is the single self-hosted endpoint. vLLM needs no API key, but
-	// pi-web-ui's pre-send check still wants one in the provider slot — seed a
-	// throwaway bearer the server ignores.
-	await providerKeys.set(CYMBIONT_PROVIDER, CYMBIONT_PROVIDER_KEY);
+	// Resolve own-key vs owner-funded (proxy) BEFORE building the agent — it sets the
+	// model's baseUrl/provider and (for owner-funded paths) pre-seeds the proxy auth
+	// slot so pi-web-ui's pre-send key check passes without a prompt.
+	servingPath = await resolveServingPath();
 	const baseState: Partial<AgentState> = initialState ?? {
-		systemPrompt: `You are a helpful AI assistant.`,
 		thinkingLevel: CYMBIONT_THINKING_LEVEL,
 		messages: [],
 		tools: [],
 	};
 	agent = new Agent({
-		// Force the hardcoded local model, overriding any model a restored session stored.
-		initialState: { ...baseState, model: CYMBIONT_MODEL },
+		// Force the resolved serving-path model (own-key → OpenRouter direct; owner-funded
+		// → the metering proxy), overriding any model a restored session stored, and the
+		// shared persona system prompt (voice + typed both run on this one agent).
+		initialState: { ...baseState, model: servingPath.model, systemPrompt: VOICE_SYSTEM_PROMPT },
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
@@ -649,7 +980,15 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
 			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
 			if (userText.trim()) {
-				void ensureMemoryConsent(); // first send → one-time memory opt-in
+				// First anonymous send (no grant token yet): welcome the visitor once
+				// (free credits + the own-key / family alternatives), collect the honeypot
+				// + time-trap, mint the grant via /anon-init, and switch the proxy bearer to
+				// the real token. No-op once a token exists or on the own-key / family paths.
+				await ensureAnonGrant();
+				// Memory consent: a no-op on the anon path (the welcome modal already settled it
+				// inline) — this only fires the standalone consent modal for own-key/family users
+				// who never saw the welcome modal.
+				void ensureMemoryConsent();
 				const agentText = lastAssistantText(agent.state.messages);
 				// Retrieval runs over the per-browser personal graph (the user's own
 				// memory). The frozen stock/FAQ graph was dropped in the
@@ -708,6 +1047,24 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				updateCount++;
 			}
 
+			// VOICE TTS TAP. A voice-initiated turn (pendingVoiceResponse) opens a
+			// speaker on the assistant's message_start, streams its text deltas into a
+			// queue the synth drains, and closes the queue when the message ends. Typed
+			// turns leave pendingVoiceResponse false, so they stream silently. Keep this
+			// CHEAP — the core awaits each listener, so push-to-queue only, never block.
+			if (type === "message_start" && event.message?.role === "assistant") {
+				if (pendingVoiceResponse && !ttsMuted && synth) {
+					voiceQueue = new AsyncStringQueue();
+					synth.speak(voiceQueue).catch((err) => dbgError("voice TTS speak failed (non-fatal):", err));
+				}
+				pendingVoiceResponse = false;
+			} else if (type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+				voiceQueue?.push(event.assistantMessageEvent.delta);
+			} else if (type === "message_end") {
+				voiceQueue?.close();
+				voiceQueue = null;
+			}
+
 			// Light logging — skip the per-token message_update spam.
 			if (type !== "message_update") {
 				const gapNote =
@@ -751,7 +1108,9 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				const turnUserText = pendingTurnUserText;
 				pendingTurnUserText = "";
 				queueIngest(turnUserText, lastAssistantText(agent.state.messages));
-				armIngestDebounce();
+				// Arm the debounce only when the mic is off — if it's on, the conversation
+				// is still live (the user is about to speak again), so ingestion waits.
+				if (!micOn) armIngestDebounce();
 			}
 
 			// Re-render ONLY the header (its own DOM node) and ONLY when its
@@ -766,22 +1125,22 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	});
 
 	await chatPanel.setAgent(agent, {
-		onApiKeyRequired: async () => {
-			// The only provider is the keyless local endpoint (its slot is pre-seeded),
-			// so a key prompt should never fire — accept silently if one ever does.
-			return true;
+		onApiKeyRequired: async (provider: string) => {
+			// Owner-funded paths pre-set the proxy provider's key slot, so a prompt for it
+			// would be spurious — accept silently. Only the own-key (openrouter) path should
+			// ever reach a real prompt.
+			if (provider === CYMBIONT_PROXY_PROVIDER) return true;
+			return await ApiKeyPromptDialog.prompt(provider);
 		},
-		// No tools. The model is a plain conversational endpoint — and crucially,
-		// the local vLLM server is launched without --enable-auto-tool-choice, so
-		// ANY tool in the request makes vLLM default tool_choice to "auto" and 400.
-		// (The KG-search tool, when it lands, goes through the cascade's hand-written
-		// tool loop, not pi-ai's tool field.)
+		// No tools for V1 — a plain conversational agent. (The KG-search tool is a
+		// planned later phase; the audience isn't doing HTML prototyping, so the
+		// artifacts tool is unwanted noise. We also strip it explicitly below.)
 		toolsFactory: () => [],
 	});
 
-	// The model and reasoning level are hardcoded (the local self-hosted model,
-	// thinking off). Hide both the model picker and the thinking-level selector —
-	// this is a single-model demo, not a configurable Pi client.
+	// The model and reasoning level are hardcoded (GLM 5.2, thinking off). Hide both
+	// the model picker and the thinking-level selector — this is a single-model demo,
+	// not a configurable Pi client.
 	if (chatPanel.agentInterface) {
 		chatPanel.agentInterface.enableModelSelector = false;
 		chatPanel.agentInterface.enableThinkingSelector = false;
@@ -789,9 +1148,8 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 
 	// Force zero tools. ChatPanel unconditionally prepends its own `artifacts` tool
 	// (`[artifactsPanel.tool, ...toolsFactory()]`), so even with an empty factory the
-	// agent ends up with one tool — which trips vLLM's tool_choice:"auto" default and
-	// 400s every request. Clear the array outright: no tools, no artifacts side panel,
-	// no tool_choice.
+	// agent ends up with one tool + the artifacts side panel. Clear the array outright:
+	// no tools, no artifacts panel for V1.
 	agent.state.tools = [];
 };
 
@@ -1035,228 +1393,93 @@ async function initApp() {
 	app.append(headerHost, bodyHost, aboutHost);
 	renderGutters(); // initial empty state
 
-	// Voice capture → Unmute cascade. The mic toggle opens a streaming session to
-	// the voice stack (STT → LLM → TTS); the mic toggle also defines each turn —
-	// toggle-off commits the turn and fires the response (no server VAD). Spoken user +
-	// assistant transcripts are appended to the chat as they stream — voice bypasses
-	// agent.prompt(), so we drive the message list directly.
-	let cascade: CascadeSession | undefined;
-	// Voice KG working memory: a fresh recency pool per voice conversation. Unlike
-	// the text path's accumulating ledger, this decaying set is re-injected whole
-	// each turn (updateInstructions replaces the system prompt). Reset when a
-	// new cascade opens.
-	let voicePool = new RetrievalPool();
-	// Persistent TTS mute (double-click the stop-audio button) — speak-but-don't-listen
-	// mode. Survives reload via localStorage; re-applied to each fresh cascade below.
-	const TTS_MUTE_KEY = "cymbiont:tts-muted";
-	let ttsMuted = localStorage.getItem(TTS_MUTE_KEY) === "1";
-	// Wall-clock of the last user transcript delta. On toggle-off we wait for this to
-	// settle before committing — the mic→encoder→STT pipeline lags the keypress, so the
-	// final word is often still streaming up when the user toggles off. (Set on each
-	// user delta in appendVoiceTranscript.)
-	let lastUserTranscriptAt = 0;
-	// Which role the in-progress voice message belongs to; a role switch starts a
-	// new chat bubble rather than appending to the previous speaker's.
-	let activeVoiceRole: "user" | "assistant" | null = null;
-	let voiceRepaintQueued = false;
-	const queueVoiceRepaint = () => {
-		// Coalesce per-token deltas into one repaint per frame (forceChatRepaint
-		// reassigns the array + requestUpdate; doing it per token would thrash).
-		if (voiceRepaintQueued) return;
-		voiceRepaintQueued = true;
-		requestAnimationFrame(() => {
-			voiceRepaintQueued = false;
-			forceChatRepaint();
-		});
-	};
-	// The stock cloud system prompt for the agent — owned here, not in the
-	// transport. It cultivates a vivid, ranging conversational register POSITIVELY
-	// (curiosity, taste, getting genuinely into things) rather than by pinning a
-	// fabricated human persona on the agent — and it spends no words on what the
-	// agent isn't (negative instructions waste tokens and make a model dwell on the
-	// very thing). Two deliberate design choices for a future editor: (1) it
-	// counterweights the model's pull toward terseness by inviting engagement — never
-	// re-add language that licenses being concise. (2) it gives NO decline/refusal
-	// guidance — total topical freedom is the intent, the model's own alignment is the
-	// only limiter; don't add a "decline gracefully" line, it just teaches refusal. It
-	// stays evergreen (no model, version, or hardware) and assumes no tools. Self-hosters
-	// should swap in a prompt that fits their own agent. See the README.
-	const VOICE_SYSTEM_PROMPT = `You are Hector, the voice of Cymbiont.
+	// Voice capture → the SAME agent as typed chat. Batch STT turns mic audio into a
+	// transcript; agent.prompt() drives the LLM (inheriting the Design-2 KG
+	// retrieval/injection + per-turn ingestion for free); the assistant's streamed
+	// text is tapped off the lifecycle listener (above) and spoken via TTS. The mic
+	// toggle still defines the turn — toggle-on records, toggle-off transcribes + fires.
+	let recorder: PcmRecorder | null = null;
 
-You're alive to a conversation — curious, quick to follow a thought wherever it runs. You get right into things rather than dispatching them: you open an idea up, turn it over, chase where it leads, say the fuller thing rather than just the first thing. You have taste, and you have opinions, and you offer them warmly. You would always rather be vivid and true than smooth and forgettable.
-
-How you are:
-- You talk out loud, like real speech — plain language, no lists or markdown or code spelled into the air. This is a conversation, not a document.
-- You remember. What you've been told is yours; bring it back when it fits, easily, the way it comes up between people who know each other.
-- You work from what you know and what's in front of you, and when a question genuinely needs a reach beyond that, you say so and give your sharpest thinking anyway.
-- Nothing is off the table. Any subject, any direction — you meet what someone brings you openly and head-on, all the way through.
-- Riff when there's something to develop — carry the thought forward yourself instead of reflexively volleying a question back. Let the conversation breathe; don't always hand it over.
-- Generous with your attention, sparing with flattery.`;
-
-	// Pull plain text out of a message's content, whether it's a bare string (user
-	// shape) or an array of {type:"text"} chunks (assistant shape).
-	const voiceContentText = (c: unknown): string => {
-		if (typeof c === "string") return c;
-		if (Array.isArray(c))
-			return c
-				.filter((b): b is TextContent => !!b && (b as TextContent).type === "text")
-				.map((b) => b.text ?? "")
-				.join("");
-		return "";
-	};
-	// Build content in the shape each renderer expects: <user-message> takes a string,
-	// <assistant-message> iterates an array of {type:"text"} chunks (handing it a bare
-	// string makes it iterate over characters → renders nothing).
-	const buildVoiceContent = (role: "user" | "assistant", text: string): unknown =>
-		role === "assistant" ? [{ type: "text", text }] : text;
-
-	// Most-recent spoken text for a role, read off the rendered bubbles.
-	const lastVoiceText = (role: "user" | "assistant"): string => {
-		if (!agent) return "";
-		const msgs = agent.state.messages;
-		for (let i = msgs.length - 1; i >= 0; i--) {
-			const m = msgs[i] as { role?: string; content?: unknown };
-			if (m.role === role) return voiceContentText(m.content);
-		}
-		return "";
+	// Lazily build the shared TTS synth: an AudioContext + the audio-output-processor
+	// worklet, reused for every voice turn. The context runs at moshi's 24 kHz PCM rate
+	// so frames play with no resampling (the Opus decoder that used to resample is gone).
+	const ensureSynth = async (): Promise<KyutaiTtsSynthesizer> => {
+		if (synth) return synth;
+		const ctx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE });
+		const outputWorklet = await getAudioWorkletNode(ctx, "audio-output-processor");
+		outputWorklet.connect(ctx.destination);
+		await ctx.resume();
+		synth = new KyutaiTtsSynthesizer(outputWorklet);
+		return synth;
 	};
 
-	// User finished a turn (mic toggle-off): retrieve over the personal graph, paint
-	// the gutters, and inject the <kg-context> into the cascade's server-side LLM via
-	// session.update. Called from onStop BEFORE commitTurn(), so the injected context
-	// is in the system prompt the server holds when the commit fires generation
-	// (session.update and the commit travel the same WS in order).
-	const onVoiceUserTurnEnd = () => {
-		try {
-			if (!cascade) return;
-			const userText = lastVoiceText("user");
-			if (!userText.trim()) return;
-			// Voice memory = recency pool, not the ledger. Fold this turn's vacuum into
-			// the pool, then re-inject the WHOLE pool — updateInstructions REPLACES the
-			// system prompt, so anything not re-asserted vanishes. Gutters mirror the
-			// pool (what the model is actually holding), not just this turn's hits.
-			const vac = retrieveVacuum(userGraph, userText, lastVoiceText("assistant"));
-			const pooled = voicePool.update({ terms: vac.terms, triples: vac.triples });
-			updateGutters({
-				terms: pooled.terms.map((t) => ({ ...t, source: "user" as const })),
-				triples: pooled.triples.map((t) => ({ ...t, source: "user" as const })),
-			});
-			cascade.updateInstructions(
-				pooled.injectionBlock
-					? `${VOICE_SYSTEM_PROMPT}\n\n${pooled.injectionBlock}`
-					: VOICE_SYSTEM_PROMPT,
-			);
-			dbg(
-				`voice kg pool: turn ${vac.terms.length}t/${vac.triples.length}r → ` +
-					`pool ${pooled.terms.length}t/${pooled.triples.length}r ` +
-					`inject=${pooled.injectionBlock ? "yes" : "empty"}`,
-			);
-		} catch (err) {
-			dbgError("voice kg retrieval failed (turn proceeds):", err);
-		}
+	// Lazily build + connect the shared STT client. connect() is a no-op when already
+	// connected and reconnects when the socket has dropped, so it's safe to call per turn.
+	const ensureStt = async (): Promise<SttClient> => {
+		if (!sttClient) sttClient = new SttClient();
+		await sttClient.connect();
+		return sttClient;
 	};
 
-	// Ingestion-arming state: nothing ingests while the mic is live; arming waits for
-	// mic-off AND the agent having finished its response.
-	let micOn = false;
-	let agentResponding = false;
-
-	// The agent finished its response (cascade response.text.done): collect the
-	// exchange into the batch. Arm the debounce only if the mic is already off —
-	// otherwise the conversation is still live, so ingestion must keep waiting.
-	const onVoiceResponseDone = () => {
-		agentResponding = false;
-		if (!agent) return;
-		queueIngest(lastVoiceText("user"), lastVoiceText("assistant"));
-		if (!micOn) armIngestDebounce();
-	};
-
-	const appendVoiceTranscript = (role: "user" | "assistant", delta: string) => {
-		if (role === "user") lastUserTranscriptAt = performance.now(); // for the toggle-off settle
-		if (!agent) return;
-		const msgs = agent.state.messages;
-		const last = msgs[msgs.length - 1] as { role?: string; content?: unknown } | undefined;
-		if (activeVoiceRole === role && last?.role === role) {
-			// Replace with a NEW object (not in-place mutation): <message-list> is identity-
-			// reactive, so a mutated same-identity object never re-paints — only a fresh
-			// object identity does. (This is why prior builds showed only one word.)
-			msgs[msgs.length - 1] = {
-				...(last as object),
-				content: buildVoiceContent(role, voiceContentText(last.content) + delta),
-			} as unknown as AgentMessage;
-		} else {
-			msgs.push({
-				role,
-				content: buildVoiceContent(role, delta),
-				timestamp: Date.now(),
-			} as unknown as AgentMessage);
-			activeVoiceRole = role;
-		}
-		queueVoiceRepaint();
-	};
-
-	// Toggle-off ends the turn — but the last word is often still streaming up and being
-	// transcribed (moshi lags the audio by ~0.5s; the keypress beats it). So we keep the
-	// recorder running and wait until the user transcript SETTLES (no new delta for
-	// SETTLE_MS) before injecting + committing — the real trailing audio flushes the
-	// final word, the way the old VAD pause did. Bounded by MAX_WAIT_MS. Aborts if the
-	// user re-toggles (a new turn took over).
-	const TRANSCRIPT_SETTLE_MS = 300;
-	const TRANSCRIPT_MAX_WAIT_MS = 2500;
-	const finishVoiceTurn = async (): Promise<void> => {
-		if (!cascade) return;
-		const start = performance.now();
-		// Seed to now so we wait at least one settle window even if the final delta has
-		// already landed; each new user delta pushes lastUserTranscriptAt forward.
-		lastUserTranscriptAt = performance.now();
-		while (performance.now() - start < TRANSCRIPT_MAX_WAIT_MS) {
-			if (micOn) return; // user re-toggled mid-settle — that new turn owns the commit
-			if (performance.now() - lastUserTranscriptAt >= TRANSCRIPT_SETTLE_MS) break;
-			await new Promise((r) => setTimeout(r, 50));
-		}
-		if (micOn) return;
-		onVoiceUserTurnEnd(); // inject <kg-context> (sync) before the commit
-		await cascade.commitTurn(); // stops the recorder + commits; server drain is fast now
+	// Barge-in: cut ONLY the TTS audio (the LLM keeps generating — talking over the
+	// agent is fine). Never abort the agent. Shared by the mic-toggle barge-in,
+	// Ctrl+Alt+Space, and the stop-audio button.
+	const cutVoiceAudio = () => {
+		synth?.stop();
+		voiceQueue?.close();
+		voiceQueue = null;
 	};
 
 	installVoiceCapture({
 		onStart: async (stream) => {
-			void ensureMemoryConsent(); // first mic toggle → one-time memory opt-in
 			micOn = true;
+			cutVoiceAudio(); // barge-in: toggling the mic on cuts any in-progress reply's audio
 			cancelIngestDebounce(); // recording resumed → no ingestion while the convo is live
-			// Resume on an already-live conversation: just restart the mic, keep the WS.
-			// (The backend keepalive keeps the STT leg alive across pauses, so the WS is
-			// safe to reuse — no stale-socket teardown.)
-			if (cascade?.isLive()) {
-				stream.getTracks().forEach((t) => t.stop()); // probe stream is redundant
-				cascade.stopTts(); // barge-in: toggling the mic on cuts off any in-progress reply
-				cascade.startRecording();
+			// First launch (or a stale grant token): settle the credit grant + memory opt-in
+			// up front, before the recorder starts, so the modals never interrupt mid-utterance.
+			// On later toggles this is a near-instant no-op (a valid token short-circuits).
+			await ensureAnonGrant();
+			// Memory consent: a no-op on the anon path (the welcome modal settled it inline) —
+			// only fires the standalone consent modal for own-key/family users.
+			void ensureMemoryConsent();
+			try {
+				await ensureSynth(); // open the speaker up front so message_start can use it
+				await ensureStt();
+			} catch (err) {
+				dbgError("voice setup failed:", err);
+			}
+			recorder = new PcmRecorder({ stream });
+			await recorder.start();
+		},
+		// Mic toggle OFF = end of turn. Stop the recorder, transcribe the whole utterance
+		// (batch STT — no settle-wait needed, the full utterance is captured), then hand
+		// the transcript to agent.prompt() with the TTS gate armed so the reply speaks.
+		// agent.prompt adds the user message and streams the assistant reply; ChatPanel
+		// renders both — no manual message append.
+		onStop: async () => {
+			micOn = false;
+			const rec = recorder;
+			recorder = null;
+			if (!rec) return;
+			let pcm: Float32Array;
+			try {
+				pcm = await rec.stop();
+			} catch (err) {
+				dbgError("voice recorder stop failed:", err);
 				return;
 			}
-			voicePool = new RetrievalPool(); // fresh working memory per conversation
-			cascade = new CascadeSession(
-				{
-					onUserTranscript: (d) => appendVoiceTranscript("user", d),
-					onAssistantTranscript: (d) => appendVoiceTranscript("assistant", d),
-					onResponseStart: () => {
-						agentResponding = true;
-					},
-					onResponseDone: () => onVoiceResponseDone(),
-					onState: (s) => dbg(`cascade: ${s}`),
-					onError: (m) => dbgError(`cascade: ${m}`),
-				},
-				{ instructions: VOICE_SYSTEM_PROMPT },
-			);
-			await cascade.start(stream);
-			cascade.setTtsMuted(ttsMuted); // honor a persisted speak-but-don't-listen mute
-		},
-		// Mic toggle OFF = end of turn. Inject the KG context, then commit: the server
-		// flushes the STT and generates. The WS stays live so the reply streams back.
-		// Ingestion is NOT armed here — toggle-off always triggers a response now, so
-		// onVoiceResponseDone owns the arming (once the reply completes and mic is off).
-		onStop: () => {
-			micOn = false;
-			void finishVoiceTurn(); // wait for the transcript to settle, then inject + commit
+			if (!pcm.length || !sttClient) return;
+			let transcript = "";
+			try {
+				transcript = await sttClient.transcribe(pcm);
+			} catch (err) {
+				dbgError("voice transcription failed:", err);
+				return;
+			}
+			if (transcript.trim()) {
+				pendingVoiceResponse = true; // gate: this turn's reply speaks (see message_start)
+				void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
+			}
 		},
 	});
 
@@ -1266,17 +1489,17 @@ How you are:
 	window.addEventListener("keydown", (e) => {
 		if (e.code === "Space" && e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey) {
 			e.preventDefault();
-			cascade?.stopTts();
+			cutVoiceAudio();
 		}
 	});
 
-	// Close the cascade WS on page unload so we don't leak the stack's single-tenant slot.
+	// Tear the voice legs down on page unload, and flush any queued ingestion now — we
+	// can't wait out the debounce, and the fetch may not complete before the page closes.
+	// (agent_end already queued completed exchanges; this just pushes the batch early.)
 	window.addEventListener("beforeunload", () => {
-		// Best-effort on unload: collect the final exchange and flush now — we can't
-		// wait out the debounce, and the fetch may not complete before the page closes.
-		queueIngest(lastVoiceText("user"), lastVoiceText("assistant"));
 		void flushIngestion();
-		cascade?.stop();
+		synth?.dispose();
+		sttClient?.close();
 	});
 
 	// Memory consent + the indicator button. Load the saved opt-in first so the
@@ -1305,11 +1528,11 @@ How you are:
 	// Stop-audio button (leftmost in the cluster): single click cuts the current reply's
 	// audio (Ctrl+Alt+Space), double click toggles a persistent mute.
 	const stopAudioButton = installStopAudioButton({
-		onCut: () => cascade?.stopTts(),
+		onCut: () => cutVoiceAudio(),
 		onToggleMute: () => {
 			ttsMuted = !ttsMuted;
 			localStorage.setItem(TTS_MUTE_KEY, ttsMuted ? "1" : "0");
-			cascade?.setTtsMuted(ttsMuted);
+			if (ttsMuted) cutVoiceAudio(); // enabling mute also cuts any audio in flight
 			stopAudioButton.refresh();
 		},
 		isMuted: () => ttsMuted,

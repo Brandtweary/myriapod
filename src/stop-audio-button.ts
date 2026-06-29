@@ -14,7 +14,7 @@ import { html, render } from "lit";
 import { Volume2, VolumeX, createElement } from "lucide";
 
 export interface StopAudioSeam {
-	// Single click: cut the agent's current TTS (cascade.stopTts).
+	// Single click: cut the agent's current TTS (cutVoiceAudio → synth.stop in main.ts).
 	onCut: () => void;
 	// Double click: toggle the persistent mute (and persist + apply it).
 	onToggleMute: () => void;

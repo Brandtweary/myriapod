@@ -22,15 +22,6 @@ export const MAX_TRIPLES_PER_HEAD = 3;
 export const TERMS_PER_RETRIEVE = 20;
 export const MAX_DOC_NODES = 3; // doc:* term-match nodes per turn
 
-// Voice recency pool (src/kg/retrieval-pool.ts). The voice path re-injects the
-// WHOLE pool every VAD turn — Unmute's updateInstructions REPLACES the system
-// prompt, so anything not re-asserted vanishes. Entries decay by a hit-count TTL:
-// recurring concepts persist for several turns, one-offs fade after one. Caps are
-// the accumulated pool size (distinct from the per-turn retrieve caps above).
-export const POOL_TERMS_CAP = 12;
-export const POOL_TRIPLES_CAP = 15;
-export const POOL_BASE_TTL = 2; // ttl(hits) = 1 if hits<=1 else round(BASE_TTL*(1+ln hits))
-
 // Ingestion write-side (cymbiont/kg/graph.py _validate_description_length)
 export const DESCRIPTION_WORD_CAP = 100;
 

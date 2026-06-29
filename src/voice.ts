@@ -4,7 +4,7 @@
 // actually reaches the model: the mic button (mounted into the editor, just left
 // of Send), the toggle state machine, the keyboard shortcut, the browser
 // mic-permission flow, and the recording indicator. The actual audio transport
-// (streaming to the Kyutai Unmute cascade) plugs into the
+// (the browser-orchestrated STT→LLM→TTS cascade — see stt.ts/tts.ts) plugs into the
 // `onStart(stream) / onStop()` seam.
 //
 // Interaction model: TOGGLE, not push-to-talk. One press (button or shortcut)
@@ -14,8 +14,8 @@ import { html, render } from "lit";
 import { createElement, Mic, Square } from "lucide";
 
 export type VoiceCaptureSeam = {
-	// Fired when recording starts, handed the live mic stream. The cascade attaches
-	// its capture → WebSocket pipe to the realtime endpoint here.
+	// Fired when recording starts, handed the live mic stream. The voice path attaches
+	// its PCM capture → batch-STT pipe here (see stt.ts).
 	onStart?: (stream: MediaStream) => void | Promise<void>;
 	// Fired when recording stops (toggle off = end of the user's turn).
 	onStop?: () => void;

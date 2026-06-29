@@ -90,8 +90,9 @@ function formatClauses(clauses?: Clause[]): string {
 	return " " + clauses.map((c) => `[${c.type.toUpperCase()}: ${c.text}]`).join(" ");
 }
 
-// retriever.py _assemble. Exported so the voice recency pool renders its contents
-// in the byte-identical <kg-context> format.
+// retriever.py _assemble. Builds the <kg-context> injection block that retrieve()
+// appends to the agent's message history (the same accumulating-ledger path serves
+// both voice and typed chat).
 export function assembleKgContext(triples: Triple[], terms: TermMatch[]): string | null {
 	if (!triples.length && !terms.length) return null;
 	const p: string[] = ["<kg-context>"];
@@ -119,9 +120,9 @@ export interface Vacuum {
 }
 
 // The raw per-turn retrieval (pre-ledger-dedup): seeds → PPR → triple
-// post-processing, then term-match + doc cap. This is the "vacuum" — everything
-// that WOULD retrieve this turn. The voice recency pool consumes it directly; the
-// text path wraps it with per-session ledger dedup in retrieve().
+// post-processing, then term-match + doc cap. This is the "vacuum" — everything that
+// WOULD retrieve this turn. retrieve() wraps it with per-session ledger dedup; the
+// gutters render the full vacuum (the deliberate "small lie" — what would retrieve).
 export function retrieveVacuum(graph: Graph, userText: string, agentText = ""): Vacuum {
 	// Seeds: user + agent (preserve order, user first), like server _handle_retrieve.
 	const userSeeds = extractSeedLabels(userText, graph);

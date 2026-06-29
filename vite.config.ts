@@ -35,22 +35,27 @@ function debugLogPlugin(): Plugin {
 	};
 }
 
-// Strict Content-Security-Policy, injected ONLY into the production build (dev
-// would break: Vite's HMR client needs inline scripts). `script-src 'self'` (no
-// inline) shuts the XSS exfiltration vector; the only network egress is the
-// self-hosted voice stack — the LLM `/llm` route and the cascade WebSocket
-// (`/api/v1/realtime`), both on the same host (same-origin in prod behind TLS).
+// Strict Content-Security-Policy, injected ONLY into the production build (dev would
+// break: Vite's HMR client needs inline scripts). `script-src 'self'` (no inline) shuts
+// the XSS key-exfiltration vector (the own-key storage posture). `connect-src` is scoped
+// to the four egress targets of the browser-orchestrated stack:
+//   - the metering proxy (chat + ingestion on the owner-funded paths), VITE_PROXY_BASE
+//   - OpenRouter directly (the own-key path), https://openrouter.ai
+//   - the moshi STT + TTS WebSockets (the voice cascade's back half), VITE_STT_BASE /
+//     VITE_TTS_BASE (ws:// in dev via the tunnel, wss:// on the public host in prod)
 function cspPlugin(): Plugin {
-	const llmBase = process.env.VITE_LLM_BASE ?? "http://127.0.0.1:8123/llm/v1";
-	const llmOrigin = new URL(llmBase).origin; // e.g. http://127.0.0.1:8123 or https://cymbiont.com
-	const wsOrigin = llmOrigin.replace(/^http/, "ws"); // ws:// or wss:// for the cascade
+	const originOf = (u: string) => new URL(u).origin;
+	const proxyOrigin = originOf(process.env.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1");
+	const sttOrigin = originOf(process.env.VITE_STT_BASE ?? "ws://localhost:8123/api/asr-streaming");
+	const ttsOrigin = originOf(process.env.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming");
+	const connect = [...new Set(["'self'", "https://openrouter.ai", proxyOrigin, sttOrigin, ttsOrigin])].join(" ");
 	const csp = [
 		"default-src 'self'",
 		"script-src 'self'",
 		"style-src 'self' 'unsafe-inline'", // lit/mini-lit/Tailwind inject inline styles; low-risk vs script
 		"img-src 'self' data:",
 		"font-src 'self' data:",
-		`connect-src 'self' ${llmOrigin} ${wsOrigin}`,
+		`connect-src ${connect}`,
 		"base-uri 'self'",
 		"form-action 'self'",
 		"object-src 'none'",
