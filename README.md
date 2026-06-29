@@ -1,4 +1,4 @@
-# Cymbiont
+# Myriapod
 
 A browser-local **voice agent** with a self-maintaining knowledge-graph memory that lives in your own
 browser.

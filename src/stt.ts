@@ -220,7 +220,7 @@ export class SttClient {
 
 	private send(msg: unknown): void {
 		if (this.ws?.readyState !== WebSocket.OPEN) return;
-		// forceFloat32 matches Unmute's `use_single_float=True` (speech_to_text.py:134):
+		// forceFloat32 matches the moshi server's single-float PCM mode:
 		// moshi's Audio.pcm is Vec<f32>, and float32 halves the payload vs the default
 		// float64. encode() returns a Uint8Array view over a possibly-larger buffer;
 		// slice to the exact bytes so the socket sends only the encoded payload.

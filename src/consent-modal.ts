@@ -1,6 +1,6 @@
 // Memory consent modal — the one-time opt-in for personal-graph memory.
 //
-// Cymbiont's thesis is sovereign, local memory, so asking permission to remember
+// Myriapod's thesis is sovereign, local memory, so asking permission to remember
 // is the feature, not an apology. Shown once on the visitor's first interaction
 // (first send OR first mic toggle); the choice persists per browser and can be
 // changed later in Settings → Memory. Reuses the generic modal shell (cw-modal-*).
@@ -25,7 +25,7 @@ export function showConsentModal(): Promise<ConsentChoice> {
 				<div class="cw-modal" role="dialog" aria-modal="true" aria-labelledby="cw-consent-title">
 					<h2 id="cw-consent-title" class="cw-modal-title">Remember our conversations?</h2>
 					<p class="cw-modal-body">
-						Cymbiont can build a small knowledge graph from what you tell it, so it keeps context
+						Myriapod can build a small knowledge graph from what you tell it, so it keeps context
 						across turns and future visits. It lives <strong>only in this browser</strong> — never
 						uploaded — and you can export or delete it anytime from Settings. Turn it on?
 					</p>

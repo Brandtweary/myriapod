@@ -1,6 +1,6 @@
-// Top-level retrieval orchestration — port of the server /retrieve + /term-match
-// pipeline AND retriever.py's post-processing (predicate-hierarchy dedup, per-head
-// cap, doc-node cap, ledger dedup, term cap, <kg-context> formatting).
+// Top-level retrieval orchestration — the /retrieve + /term-match pipeline plus
+// post-processing (predicate-hierarchy dedup, per-head cap, doc-node cap, ledger
+// dedup, term cap, <kg-context> formatting).
 //
 // Returns BOTH:
 //   - vacuum: the full per-turn retrieval (pre-ledger-dedup) for the gutter
@@ -24,7 +24,7 @@ import type { Graph } from "./graph";
 import type { InjectedLedger } from "./ledger";
 import type { Clause, TermMatch, Triple } from "./types";
 
-// retriever.py PREDICATE_SHADOWS: relates-to is shadowed by ANY other predicate
+// PREDICATE_SHADOWS: relates-to is shadowed by ANY other predicate
 // between the same ordered (subject, object).
 const SHADOWED_BY_ANY = new Set(["relates-to"]);
 
@@ -36,7 +36,7 @@ export interface RetrievalResult {
 
 export const tripleKey = (t: Triple) => `${t.subject} --${t.predicate}--> ${t.object}`;
 
-// retriever.py _dedup_predicate_hierarchy
+// dedup predicate hierarchy
 function dedupPredicateHierarchy(triples: Triple[]): Triple[] {
 	if (!triples.length) return triples;
 
@@ -72,7 +72,7 @@ function dedupPredicateHierarchy(triples: Triple[]): Triple[] {
 	return pass2;
 }
 
-// retriever.py _cap_per_head (rank-preserving)
+// cap per head (rank-preserving)
 function capPerHead(triples: Triple[], cap: number): Triple[] {
 	const counts = new Map<string, number>();
 	const out: Triple[] = [];
@@ -90,7 +90,7 @@ function formatClauses(clauses?: Clause[]): string {
 	return " " + clauses.map((c) => `[${c.type.toUpperCase()}: ${c.text}]`).join(" ");
 }
 
-// retriever.py _assemble. Builds the <kg-context> injection block that retrieve()
+// Assemble the <kg-context> injection block that retrieve()
 // appends to the agent's message history (the same accumulating-ledger path serves
 // both voice and typed chat).
 export function assembleKgContext(triples: Triple[], terms: TermMatch[]): string | null {
@@ -130,7 +130,7 @@ export function retrieveVacuum(graph: Graph, userText: string, agentText = ""): 
 	const userSet = new Set(userSeeds);
 	const seeds = [...userSeeds, ...agentSeeds.filter((s) => !userSet.has(s))];
 
-	// PPR overfetch -> retriever.py triple post-processing -> top-N by PPR weight.
+	// PPR overfetch -> triple post-processing -> top-N by PPR weight.
 	// (No MMR diversity rerank: the personal graph carries no embeddings, so it was
 	// a no-op; dedup before truncating keeps the strongest survivors.)
 	const ppr = queryPpr(graph, seeds, { topN: PPR_OVERFETCH });

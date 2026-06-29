@@ -1,12 +1,8 @@
-// Personal-graph extraction prompt — a fresh, single-turn rewrite of the harness
-// ingestion prompt (cymbiont/cymbiont/kg/extraction_prompts.py build_ingest_prompt).
-//
-// Differences from the harness: single conversation TURN as input (not a
-// 5-message window), no rolling-context slot (the browser has none), existing
-// context is a wholesale dump of the tiny personal graph (no /extract-seeds),
-// and the relationship schema carries NO `weight` field (removed from the harness
-// Jun 2026 as dead/discarded — edges are uniformly 1.0). Extraction philosophy
-// mirrors the harness: pull everything salient worth recalling later.
+// Personal-graph extraction prompt. A single conversation TURN goes in (not a
+// multi-message window), existing context is a wholesale dump of the tiny personal
+// graph, and the relationship schema carries no `weight` field — edges are
+// uniformly 1.0. Extraction philosophy: pull everything salient worth recalling
+// later.
 
 export interface IngestMessages {
 	system: string;

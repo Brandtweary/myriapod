@@ -32,7 +32,7 @@ export class MemoryTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-4 p-1">
 				<p class="text-sm text-muted-foreground">
-					Cymbiont remembers your conversations as a personal knowledge graph, kept only in this browser.
+					Myriapod remembers your conversations as a personal knowledge graph, kept only in this browser.
 				</p>
 				<div class="flex items-center gap-3">
 					<button

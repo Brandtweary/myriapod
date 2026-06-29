@@ -1,7 +1,6 @@
-// Unit tests for the mutable Graph API (Slice 1) — getOrCreate / addLink /
+// Unit tests for the mutable Graph API — getOrCreate / addLink /
 // expireLink / clause-merge / commutative reverse / 100-word cap / serialize.
-// Ported semantics from cymbiont/cymbiont/kg/graph.py.
-// Run from cymbiont/:  node_modules/.bin/tsx scripts/test-graph-mutation.ts
+// Run from myriapod/:  node_modules/.bin/tsx scripts/test-graph-mutation.ts
 
 import { DescriptionTooLongError, Graph } from "../src/kg/graph.ts";
 

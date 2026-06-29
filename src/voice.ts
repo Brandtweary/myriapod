@@ -123,7 +123,7 @@ export class VoiceController {
 		try {
 			await this.seam.onStart?.(this.stream);
 		} catch (err) {
-			console.error("[cymbiont] voice onStart seam threw", err);
+			console.error("[myriapod] voice onStart seam threw", err);
 		}
 	}
 

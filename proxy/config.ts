@@ -39,7 +39,7 @@ export const config = {
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
-	dbPath: process.env.DB_PATH ?? "./cymbiont-proxy.db",
+	dbPath: process.env.DB_PATH ?? "./myriapod-proxy.db",
 	host: process.env.HOST ?? "0.0.0.0",
 	port: num("PORT", 8790),
 };

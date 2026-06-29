@@ -1,7 +1,6 @@
-// Retrieval tunables — mirror cymbiont/cymbiont/config.py ([kg] section) and the
-// hardcoded query_ppr / mmr_rerank params. Single source of truth for the port.
+// Retrieval tunables — the single source of truth for PPR and the output caps.
 
-// PPR (cymbiont/kg/graph.py query_ppr)
+// PPR (query_ppr)
 export const PPR_ALPHA = 0.5; // restart probability (HippoRAG-optimal)
 export const PPR_MAX_ITER = 100;
 export const PPR_TOL = 1e-6;
@@ -22,10 +21,10 @@ export const MAX_TRIPLES_PER_HEAD = 3;
 export const TERMS_PER_RETRIEVE = 20;
 export const MAX_DOC_NODES = 3; // doc:* term-match nodes per turn
 
-// Ingestion write-side (cymbiont/kg/graph.py _validate_description_length)
+// Ingestion write-side (description-length validation)
 export const DESCRIPTION_WORD_CAP = 100;
 
-// Edge-type semantics (cymbiont/kg/graph.py)
+// Edge-type semantics
 export const COMMUTATIVE_TYPES = new Set(["relates-to"]);
 export const RETRIEVAL_ONLY_EDGE_TYPES = new Set([
 	"alias-of",

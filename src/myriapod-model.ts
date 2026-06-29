@@ -10,12 +10,12 @@ import type { Model } from "@earendil-works/pi-ai";
 //   own-key → the visitor's own OpenRouter key, calling OpenRouter DIRECTLY (no proxy)
 //   family  → a redeemed family token, through the metering proxy
 //   anon    → a minted $10 free-tier token, through the metering proxy
-// The own-key path uses CYMBIONT_MODEL (baseUrl = OpenRouter direct); the owner-funded
+// The own-key path uses MYRIAPOD_MODEL (baseUrl = OpenRouter direct); the owner-funded
 // paths use proxyChatModel() (baseUrl = the proxy). The proxy holds the real owner key
 // server-side — no key ever reaches the browser.
 
 // GLM 5.2's OpenRouter model id (z-ai). 1M context.
-export const CYMBIONT_MODEL_ID = "z-ai/glm-5.2";
+export const MYRIAPOD_MODEL_ID = "z-ai/glm-5.2";
 
 // The own-key serving path: GLM 5.2 called DIRECTLY against OpenRouter with the
 // visitor's own key. provider "openrouter" makes pi-ai emit the OpenRouter reasoning
@@ -33,8 +33,8 @@ export const CYMBIONT_MODEL_ID = "z-ai/glm-5.2";
 // cost is USD per million tokens — APPROXIMATE (GLM 5.2's OpenRouter price; the proxy
 // meters the TRUE per-call cost from OpenRouter's usage, so this only feeds the UI
 // stats line). maxTokens is a generation ceiling, not a target (the proxy also caps it).
-export const CYMBIONT_MODEL: Model<"openai-completions"> = {
-	id: CYMBIONT_MODEL_ID,
+export const MYRIAPOD_MODEL: Model<"openai-completions"> = {
+	id: MYRIAPOD_MODEL_ID,
 	name: "GLM 5.2",
 	api: "openai-completions",
 	provider: "openrouter",
@@ -46,31 +46,31 @@ export const CYMBIONT_MODEL: Model<"openai-completions"> = {
 	maxTokens: 8_192,
 };
 
-// Reasoning off for snappiness (see the long note on CYMBIONT_MODEL.reasoning). "off"
+// Reasoning off for snappiness (see the long note on MYRIAPOD_MODEL.reasoning). "off"
 // → pi-ai sends `reasoning: { effort: "none" }` → GLM does not think.
-export const CYMBIONT_THINKING_LEVEL = "off" as const;
+export const MYRIAPOD_THINKING_LEVEL = "off" as const;
 
 // --- Owner-funded path: the metering proxy ---------------------------------
 // The owner-funded serving paths (anonymous + family) route chat AND ingestion through
 // our Bun proxy instead of calling OpenRouter directly; the own-key path bypasses it.
 // Override the URL at build time via VITE_PROXY_BASE.
 const ENV = import.meta.env as Record<string, string | undefined>;
-export const CYMBIONT_PROXY_BASE = ENV.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1";
+export const MYRIAPOD_PROXY_BASE = ENV.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1";
 
 // A provider id distinct from "openrouter" so the own-key path's stored OpenRouter key
 // and the proxy's auth token never share a providerKeys slot.
-export const CYMBIONT_PROXY_PROVIDER = "cymbiont";
+export const MYRIAPOD_PROXY_PROVIDER = "myriapod";
 
 // GLM 5.2 pointed at the proxy. pi-ai auto-detects a non-openrouter.ai baseUrl as plain
 // OpenAI and would emit `reasoning_effort`; we pin thinkingFormat "openrouter" so the
 // forwarded body carries `reasoning: { effort }` — byte-identical to the proven direct
 // path (the proxy passes it through to OpenRouter verbatim). Everything else (including
-// reasoning:true) is inherited from CYMBIONT_MODEL.
+// reasoning:true) is inherited from MYRIAPOD_MODEL.
 export function proxyChatModel(): Model<"openai-completions"> {
 	return {
-		...CYMBIONT_MODEL,
-		provider: CYMBIONT_PROXY_PROVIDER,
-		baseUrl: CYMBIONT_PROXY_BASE,
+		...MYRIAPOD_MODEL,
+		provider: MYRIAPOD_PROXY_PROVIDER,
+		baseUrl: MYRIAPOD_PROXY_BASE,
 		compat: { thinkingFormat: "openrouter" },
 	};
 }

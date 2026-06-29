@@ -6,10 +6,10 @@ import { defineConfig, type Plugin } from "vite";
 // coding agent can read directly (no copy-paste from the console). The browser
 // side lives in src/debug.ts. Disabled automatically in production builds (the
 // middleware only registers on the dev server).
-const DEBUG_LOG_FILE = "/tmp/cymbiont-debug.log";
+const DEBUG_LOG_FILE = "/tmp/myriapod-debug.log";
 function debugLogPlugin(): Plugin {
 	return {
-		name: "cymbiont-debug-log",
+		name: "myriapod-debug-log",
 		configureServer(server) {
 			server.middlewares.use("/__log", (req, res) => {
 				if (req.method !== "POST") {
@@ -62,7 +62,7 @@ function cspPlugin(): Plugin {
 		"frame-ancestors 'none'",
 	].join("; ");
 	return {
-		name: "cymbiont-csp",
+		name: "myriapod-csp",
 		apply: "build",
 		transformIndexHtml() {
 			return [

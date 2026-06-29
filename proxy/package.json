@@ -1,9 +1,9 @@
 {
-  "name": "cymbiont-proxy",
+  "name": "myriapod-proxy",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Metering inference proxy for cymbiont-web: holds the owner OpenRouter key, meters per-principal usage, gates free credits. Self-contained Bun service — deploy by copying proxy/ and running `bun install && bun start`.",
+  "description": "Metering inference proxy for myriapod: holds the owner OpenRouter key, meters per-principal usage, gates free credits. Self-contained Bun service — deploy by copying proxy/ and running `bun install && bun start`.",
   "scripts": {
     "start": "bun run server.ts",
     "mint-code": "bun run mint-code.ts",

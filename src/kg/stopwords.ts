@@ -1,6 +1,5 @@
-// NLTK english stopwords (nltk.corpus.stopwords.words("english"), 198 words).
-// Used in term-index doc-node path decomposition to mirror graph.py
-// _build_term_index exactly. Dumped verbatim from the installed NLTK corpus.
+// NLTK english stopwords (the standard 198-word list). Used in term-index
+// doc-node path decomposition.
 
 export const NLTK_ENGLISH_STOPWORDS = new Set<string>([
 	"a", "about", "above", "after", "again", "against", "ain", "all", "am", "an",
@@ -27,7 +26,7 @@ export const NLTK_ENGLISH_STOPWORDS = new Set<string>([
 	"yourself", "yourselves",
 ]);
 
-// server.py _POS_STOPWORDS — content-tagged words that are still noise. Used by
+// POS stopwords — content-tagged words that are still noise. Used by
 // the POS-approximating seed filter (we can't POS-tag in the browser, so seed
 // extraction drops everything in POS_STOPWORDS ∪ NLTK english stopwords instead
 // of keeping NN/VB/JJ tags). The apostrophe-prefixed contraction fragments

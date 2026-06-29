@@ -1,6 +1,6 @@
-# cymbiont-proxy
+# myriapod-proxy
 
-The metering inference proxy for cymbiont-web. It holds the owner OpenRouter key
+The metering inference proxy for myriapod. It holds the owner OpenRouter key
 server-side (the browser never sees it), meters per-principal spend in SQLite, and
 gates the free tier. Self-contained Bun service — deploy by copying this `proxy/`
 directory and running it; it shares nothing with the frontend build.

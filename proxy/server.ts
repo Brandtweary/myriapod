@@ -1,4 +1,4 @@
-// cymbiont-proxy — metered OpenAI-compatible inference proxy.
+// myriapod-proxy — metered OpenAI-compatible inference proxy.
 //
 // Holds the owner OpenRouter key server-side; the browser never sees it. Every
 // principal — anonymous-free or family — is identified by an opaque bearer token
@@ -282,7 +282,7 @@ app.post("/redeem", async (c) => {
 		const { key } = await mintSubKey({
 			base: config.openrouterBase,
 			provisioningKey: config.provisioningKey,
-			name: `cymbiont-family-${code}`,
+			name: `myriapod-family-${code}`,
 			limit: config.familyLimit,
 		});
 		db.createPrincipal({
@@ -307,7 +307,7 @@ if (import.meta.main) {
 		console.warn("[proxy] WARNING: OWNER_OPENROUTER_KEY is empty — free-tier requests will fail.");
 	}
 	console.log(
-		`[proxy] cymbiont-proxy listening on http://${config.host}:${config.port} | ` +
+		`[proxy] myriapod-proxy listening on http://${config.host}:${config.port} | ` +
 			`origins=${config.allowedOrigins.join(", ")}`,
 	);
 	Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch });

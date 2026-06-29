@@ -66,7 +66,7 @@ export function showGrantModal(opts: GrantModalOptions): Promise<GrantSignals> {
 						<input type="checkbox" name="cw_remember" checked />
 						<span class="cw-grant-toggle-track"><span class="cw-grant-toggle-thumb"></span></span>
 						<span class="cw-grant-toggle-text">
-							<strong>Remember our conversations.</strong> Cymbiont builds a small knowledge graph
+							<strong>Remember our conversations.</strong> Myriapod builds a small knowledge graph
 							from what you tell it, kept <strong>only in this browser</strong> — never uploaded,
 							exportable and deletable anytime from Settings.
 						</span>

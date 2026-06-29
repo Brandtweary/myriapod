@@ -22,13 +22,13 @@ import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import {
-	CYMBIONT_MODEL,
-	CYMBIONT_MODEL_ID,
-	CYMBIONT_PROXY_BASE,
-	CYMBIONT_PROXY_PROVIDER,
-	CYMBIONT_THINKING_LEVEL,
+	MYRIAPOD_MODEL,
+	MYRIAPOD_MODEL_ID,
+	MYRIAPOD_PROXY_BASE,
+	MYRIAPOD_PROXY_PROVIDER,
+	MYRIAPOD_THINKING_LEVEL,
 	proxyChatModel,
-} from "./cymbiont-model.js";
+} from "./myriapod-model.js";
 import { ExportTab, MemoryTab, OpenRouterKeyTab } from "./settings.js";
 import { showGrantModal } from "./grant-modal.js";
 import { load as loadBotd } from "@fingerprintjs/botd";
@@ -115,14 +115,14 @@ setAppStorage(storage);
 // --- Serving path: own-key (OpenRouter direct) vs owner-funded (metering proxy) ---
 const OPENROUTER_DIRECT_BASE = "https://openrouter.ai/api/v1";
 // providerKeys slot holding a redeemed family token (set by settings redemption).
-const FAMILY_TOKEN_SLOT = "cymbiont-family";
+const FAMILY_TOKEN_SLOT = "myriapod-family";
 // providerKeys slot holding the anonymous free-tier continuity token (minted at
 // /anon-init). Its presence is also the "welcome already shown" signal — the modal
 // reappears only if the token is gone (cleared storage → a re-mint needs re-gating).
-const ANON_TOKEN_SLOT = "cymbiont-anon";
-// The proxy origin (CYMBIONT_PROXY_BASE minus the /v1 suffix) — where /anon-init,
+const ANON_TOKEN_SLOT = "myriapod-anon";
+// The proxy origin (MYRIAPOD_PROXY_BASE minus the /v1 suffix) — where /anon-init,
 // /redeem, and /balance live.
-const CYMBIONT_PROXY_ORIGIN = CYMBIONT_PROXY_BASE.replace(/\/v1\/?$/, "");
+const MYRIAPOD_PROXY_ORIGIN = MYRIAPOD_PROXY_BASE.replace(/\/v1\/?$/, "");
 
 // BotD bot-detection verdict, computed once on boot and sent to /anon-init as the
 // invisible bot gate. Fail-OPEN: stays {bot:false} if BotD is blocked or errors, so
@@ -160,26 +160,26 @@ let servingPath: ServingPath;
 async function resolveServingPath(): Promise<ServingPath> {
 	const ownKey = await providerKeys.get("openrouter");
 	if (ownKey) {
-		return { mode: "own", model: CYMBIONT_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
+		return { mode: "own", model: MYRIAPOD_MODEL, baseUrl: OPENROUTER_DIRECT_BASE, auth: ownKey };
 	}
 	const familyToken = await providerKeys.get(FAMILY_TOKEN_SLOT);
 	if (familyToken && familyToken.length) {
-		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, familyToken);
-		return { mode: "family", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth: familyToken };
+		await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, familyToken);
+		return { mode: "family", model: proxyChatModel(), baseUrl: MYRIAPOD_PROXY_BASE, auth: familyToken };
 	}
 	// Anonymous: use the stored grant token if present; "anon" is the pre-grant
 	// placeholder that triggers the welcome modal + /anon-init mint on first send.
 	const anonToken = await providerKeys.get(ANON_TOKEN_SLOT);
 	const auth = anonToken && anonToken.length ? anonToken : "anon";
-	await providerKeys.set(CYMBIONT_PROXY_PROVIDER, auth);
-	return { mode: "anon", model: proxyChatModel(), baseUrl: CYMBIONT_PROXY_BASE, auth };
+	await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, auth);
+	return { mode: "anon", model: proxyChatModel(), baseUrl: MYRIAPOD_PROXY_BASE, auth };
 }
 
 // Redeem a family code at the proxy → stores the returned token so the NEXT chat
 // resolves to the family serving path. Used by the Access settings tab.
 async function redeemFamilyCode(code: string): Promise<{ ok: boolean; error?: string }> {
 	try {
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/redeem`, {
+		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/redeem`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ code }),
@@ -211,7 +211,7 @@ async function fetchHostedBalance(): Promise<{
 		if (servingPath.auth && servingPath.auth !== "anon") {
 			headers.Authorization = `Bearer ${servingPath.auth}`;
 		}
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, { headers });
+		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/balance`, { headers });
 		if (!res.ok) return null;
 		return (await res.json()) as { tier: string; remaining: number; grant: number };
 	} catch {
@@ -225,7 +225,7 @@ async function fetchHostedBalance(): Promise<{
 async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): Promise<string | null> {
 	try {
 		const existing = (await providerKeys.get(ANON_TOKEN_SLOT)) ?? "";
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/anon-init`, {
+		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/anon-init`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -252,7 +252,7 @@ async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): 
 // anyway, and the chat call will surface the real error).
 async function anonTokenIsValid(token: string): Promise<boolean> {
 	try {
-		const res = await fetch(`${CYMBIONT_PROXY_ORIGIN}/balance`, {
+		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/balance`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		return res.ok;
@@ -275,7 +275,7 @@ async function ensureAnonGrant(): Promise<void> {
 		if (await anonTokenIsValid(servingPath.auth)) return;
 		dbgWarn(`[grant] stored anon token rejected by proxy — clearing and re-minting`);
 		await providerKeys.delete(ANON_TOKEN_SLOT);
-		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, "anon");
+		await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, "anon");
 		servingPath.auth = "anon";
 	}
 	const signals = await showGrantModal({ onOpenSettings: openSettings });
@@ -288,7 +288,7 @@ async function ensureAnonGrant(): Promise<void> {
 	const token = await initAnonGrant({ honeypot: signals.honeypot, elapsedMs: signals.elapsedMs });
 	if (token) {
 		await providerKeys.set(ANON_TOKEN_SLOT, token);
-		await providerKeys.set(CYMBIONT_PROXY_PROVIDER, token);
+		await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, token);
 		servingPath.auth = token;
 	}
 }
@@ -374,7 +374,7 @@ let pendingVoiceResponse = false;
 let voiceQueue: AsyncStringQueue | null = null;
 // Persistent "speak-but-don't-listen" mute (double-click the stop-audio button),
 // remembered per browser. When set, the speaker is never opened on message_start.
-const TTS_MUTE_KEY = "cymbiont:tts-muted";
+const TTS_MUTE_KEY = "myriapod:tts-muted";
 let ttsMuted = localStorage.getItem(TTS_MUTE_KEY) === "1";
 
 // A minimal push/close async-iterable: text deltas are pushed in as they stream;
@@ -435,11 +435,11 @@ async function getAudioWorkletNode(audioContext: AudioContext, name: string): Pr
 // or hardware) and assumes no tools. Self-hosters should swap in a prompt that fits
 // their own agent. See the README. NOTE: this is the SHARED system prompt for both
 // voice and typed chat (single agent), so its "talk out loud, no markdown" guidance
-// also reaches the typed path — see the report's system-prompt seam note.
+// also reaches the typed path.
 // The prompt deliberately names the model stack (LLM / Kyutai moshi STT+TTS) so the
 // agent knows what it is rather than hallucinating (it assumed a French accent) —
 // update the stack lines here on any model or voice swap.
-const VOICE_SYSTEM_PROMPT = `You are Radim, the voice of Cymbiont.
+const VOICE_SYSTEM_PROMPT = `You are Radim, the voice of Myriapod.
 
 You're alive to a conversation — curious, quick to follow a thought wherever it runs. You get right into things rather than dispatching them: you open an idea up, turn it over, chase where it leads, say the fuller thing rather than just the first thing. You have taste, and you have opinions, and you offer them warmly. You would always rather be vivid and true than smooth and forgettable.
 
@@ -454,7 +454,7 @@ How you are:
 What you are (only worth mentioning if it comes up):
 - Your mind is GLM 5.2, a frontier language model.
 - You hear through Kyutai's moshi speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
-- You're the voice of Cymbiont. A small background agent quietly reads each exchange and distills it into a personal knowledge graph — people, things, and how they relate — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that graph, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
+- You're the voice of Myriapod. A small background agent quietly reads each exchange and distills it into a personal knowledge graph — people, things, and how they relate — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that graph, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
 
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
@@ -670,7 +670,7 @@ function cancelIngestDebounce(): void {
 // every ingestion the chat triggered) — no override of framework UI. (The proxy meters
 // the real cost separately; this is purely the on-screen readout.)
 function addIngestionCostToSession(promptTokens: number, completionTokens: number): void {
-	const c = CYMBIONT_MODEL.cost;
+	const c = MYRIAPOD_MODEL.cost;
 	const inCost = (promptTokens / 1_000_000) * c.input;
 	const outCost = (completionTokens / 1_000_000) * c.output;
 	type Usage = {
@@ -722,10 +722,10 @@ async function flushIngestion(): Promise<void> {
 		// Ingestion rides the SAME serving path as chat: own-key → OpenRouter direct;
 		// owner-funded → the proxy (which meters it against the same principal, so
 		// ingestion debits the visitor's credit too). Same GLM model as chat for V1; a
-		// cheaper extraction model is a documented later refinement (see cymbiont-model.ts).
+		// cheaper extraction model is a documented later refinement (see myriapod-model.ts).
 		const completion = makeCompletion({
 			baseUrl: servingPath.baseUrl,
-			model: CYMBIONT_MODEL_ID,
+			model: MYRIAPOD_MODEL_ID,
 			apiKey: servingPath.auth,
 			onUsage: ({ promptTokens, completionTokens }) => {
 				llmUsage = `${promptTokens}p/${completionTokens}c tok`;
@@ -803,7 +803,7 @@ function downloadPersonalGraph(): void {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
-	a.download = `cymbiont-personal-graph-${new Date().toISOString().slice(0, 10)}.json`;
+	a.download = `myriapod-personal-graph-${new Date().toISOString().slice(0, 10)}.json`;
 	a.click();
 	URL.revokeObjectURL(url);
 }
@@ -812,7 +812,7 @@ function downloadPersonalGraph(): void {
 async function importPersonalGraphFromFile(file: File): Promise<void> {
 	const asset = JSON.parse(await file.text()) as GraphAsset;
 	if (!asset || typeof asset !== "object" || typeof asset.thoughts !== "object") {
-		throw new Error("not a Cymbiont personal-graph export");
+		throw new Error("not a Myriapod personal-graph export");
 	}
 	userGraph = new Graph(asset);
 	await saveUserGraph();
@@ -820,7 +820,7 @@ async function importPersonalGraphFromFile(file: File): Promise<void> {
 }
 
 // Wipe the personal graph (Settings → delete). The privacy assurance: the visitor
-// can remove everything Cymbiont remembered, not just trust that it's local.
+// can remove everything Myriapod remembered, not just trust that it's local.
 async function deletePersonalGraph(): Promise<void> {
 	userGraph = Graph.empty();
 	await saveUserGraph();
@@ -948,7 +948,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	// slot so pi-web-ui's pre-send key check passes without a prompt.
 	servingPath = await resolveServingPath();
 	const baseState: Partial<AgentState> = initialState ?? {
-		thinkingLevel: CYMBIONT_THINKING_LEVEL,
+		thinkingLevel: MYRIAPOD_THINKING_LEVEL,
 		messages: [],
 		tools: [],
 	};
@@ -1129,7 +1129,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// Owner-funded paths pre-set the proxy provider's key slot, so a prompt for it
 			// would be spurious — accept silently. Only the own-key (openrouter) path should
 			// ever reach a real prompt.
-			if (provider === CYMBIONT_PROXY_PROVIDER) return true;
+			if (provider === MYRIAPOD_PROXY_PROVIDER) return true;
 			return await ApiKeyPromptDialog.prompt(provider);
 		},
 		// No tools for V1 — a plain conversational agent. (The KG-search tool is a
@@ -1171,8 +1171,8 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	await createAgent({
 		// Always use the hardcoded model/reasoning, ignoring whatever a stored
 		// session was saved with — the model is not user-selectable.
-		model: CYMBIONT_MODEL,
-		thinkingLevel: CYMBIONT_THINKING_LEVEL,
+		model: MYRIAPOD_MODEL,
+		thinkingLevel: MYRIAPOD_THINKING_LEVEL,
 		messages: sessionData.messages,
 		tools: [],
 	});
@@ -1211,20 +1211,20 @@ const setView = (view: "chat" | "about") => {
 const renderAbout = () => html`
 	<div class="flex-1 overflow-y-auto">
 		<div class="max-w-2xl mx-auto px-6 py-10 flex flex-col gap-4">
-			<h1 class="text-2xl font-semibold text-primary">About Cymbiont</h1>
+			<h1 class="text-2xl font-semibold text-primary">About Myriapod</h1>
 			<p class="text-sm text-muted-foreground">Placeholder — a fuller write-up is coming.</p>
 			<p class="text-sm leading-relaxed">
-				Cymbiont is a browser-local voice agent with a self-maintaining knowledge-graph memory
+				Myriapod is a browser-local voice agent with a self-maintaining knowledge-graph memory
 				layer for LLM agents — speak or type, and a personal knowledge graph grows in your own
 				browser from the conversation. The source lives on GitHub:
 			</p>
 			<a
 				class="text-primary underline break-all text-sm"
-				href="https://github.com/Brandtweary/cymbiont"
+				href="https://github.com/Brandtweary/myriapod"
 				target="_blank"
 				rel="noreferrer"
 			>
-				https://github.com/Brandtweary/cymbiont
+				https://github.com/Brandtweary/myriapod
 			</a>
 		</div>
 	</div>
@@ -1242,10 +1242,11 @@ const renderHeader = () => {
 			<div class="cw-header flex items-center justify-between border-b border-border shrink-0">
 				<div class="flex items-center gap-1 px-4 py-2">
 					<button
-						class="text-base font-semibold text-primary px-1 mr-1 hover:opacity-80 transition-opacity"
+						class="text-base font-semibold px-1 mr-1 hover:opacity-80 transition-opacity"
+						style="color: oklch(67% 0.25 25)"
 						@click=${() => setView("chat")}
 					>
-						Cymbiont
+						Myriapod
 					</button>
 					${Button({
 						variant: "ghost",

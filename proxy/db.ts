@@ -1,4 +1,4 @@
-// SQLite metering layer for cymbiont-proxy.
+// SQLite metering layer for myriapod-proxy.
 //
 // Three tables: principals (who can spend + how much is left), usage_log (every
 // metered call), family_codes (redeemable codes → family principals). All money

@@ -1,10 +1,9 @@
-// Seed extraction — port of server.py extract_seed_labels.
+// Seed extraction.
 //
-// DIVERGENCE (accepted): Python uses nltk.word_tokenize + nltk.pos_tag and keeps
-// only NN/VB/JJ tags minus _POS_STOPWORDS. We can't POS-tag in the browser, so we
-// approximate "content words" by dropping SEED_STOPWORDS (POS_STOPWORDS ∪ NLTK
-// english stopwords) from \w+ tokens. The bigram/trigram phrase matching is kept
-// verbatim — it's load-bearing (without it ~53% of queries get no seeds).
+// We can't POS-tag in the browser, so we approximate "content words" by dropping
+// SEED_STOPWORDS (POS_STOPWORDS ∪ NLTK english stopwords) from \w+ tokens. The
+// bigram/trigram phrase matching is load-bearing — without it ~53% of queries get
+// no seeds.
 
 import { depluralize, stemWord, tokenize } from "./stem";
 import { SEED_STOPWORDS } from "./stopwords";

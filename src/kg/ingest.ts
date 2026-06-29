@@ -1,11 +1,10 @@
-// Personal-graph ingestion — browser port of the harness ingestion pipeline
-// (cymbiont/cymbiont/kg/ingest.py + extraction_parse.py + server.py _handle_ingest).
+// Personal-graph ingestion pipeline.
 //
 // Flow per turn: dump the personal graph as existing-context → build the prompt →
 // one LLM completion → tolerant brace-bracket parse → apply mutations to the
-// in-page user Graph. The completion hits the same self-hosted OpenAI-compatible
-// endpoint as typed chat (see cymbiont-model.ts); `makeCompletion` is endpoint-
-// agnostic, so a deploy can repoint `baseUrl` without touching this logic.
+// in-page user Graph. The completion hits the same OpenAI-compatible endpoint as
+// typed chat (see myriapod-model.ts); `makeCompletion` is endpoint-agnostic, so a
+// deploy can repoint `baseUrl` without touching this logic.
 
 import { DescriptionTooLongError, Graph } from "./graph";
 import { buildIngestMessages } from "./extraction-prompts";
@@ -63,7 +62,7 @@ export function makeCompletion(opts: CompletionOpts): CompletionFn {
 	};
 }
 
-// -- Tolerant parse (port of extraction_parse.py) ---------------------------
+// -- Tolerant parse ---------------------------------------------------------
 
 /** Recover complete JSON objects from one top-level array in a (possibly
  *  truncated) payload, stopping at the first incomplete object. */
@@ -154,7 +153,7 @@ export function extractJsonObject(raw: string): string | null {
 	return raw.slice(first, last + 1);
 }
 
-// -- Strip injected context (port of ingest.py strip_injected_context) ------
+// -- Strip injected context -------------------------------------------------
 
 const STRIP_TAGS: Array<[string, string]> = [["<kg-context>", "</kg-context>"]];
 
@@ -196,7 +195,7 @@ export function dumpExistingContext(graph: Graph): string {
 	return lines.join("\n");
 }
 
-// -- Apply (mirror of server.py _handle_ingest control flow) ----------------
+// -- Apply mutations --------------------------------------------------------
 
 export interface ApplyStats {
 	entitiesAdded: number;
@@ -266,7 +265,7 @@ export function applyExtraction(graph: Graph, payload: ExtractionPayload): Apply
 
 		if (graph.hasLink(subj, pred, obj)) {
 			// Existing edge: merge clauses only (no weight change, no re-fire) —
-			// faithful to _handle_ingest's has_link gate, NOT a re-add.
+			// the has-link gate, NOT a re-add.
 			if (clauses.length) {
 				const source = graph.get(subj);
 				const target = graph.get(obj);

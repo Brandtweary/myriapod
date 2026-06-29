@@ -1,4 +1,4 @@
-# Cymbiont
+# Myriapod
 
 A browser-local **voice agent** — the public, openable artifact. The thesis: a **frontier LLM with a
 sovereign, browser-local knowledge-graph memory, metered honestly.** You talk to it (or type), it
@@ -12,10 +12,8 @@ free tier, family codes, or bring-your-own-key); the STT/TTS legs are self-hoste
 [Kyutai moshi](https://github.com/kyutai-labs/moshi) models. The "run it yourself" story points
 people at those open components.
 
-It is a *publishing* project, not a port: the harness already works, this re-renders a known-good
-system for a reachable audience. Motto: **maximal reuse** — writing logic from scratch (outside the
-new UI) is a red flag. The live plan, design decisions, and phase status live in the gitignored
-`feature_taskpad_cymbiont_web.md`.
+Motto: **maximal reuse** — lean on the framework and existing components; writing logic from scratch
+(outside the new UI) is a red flag.
 
 **PUBLISHED REPO — treat every committed byte as public** (GitHub private, the live site public;
 posture is public regardless). No live knowledge-graph node labels, no personal/workspace terms, no
@@ -30,13 +28,13 @@ logic on a server). A single **Pi agent** (`@earendil-works/pi-agent-core`) driv
 typed chat; the browser reaches three external services:
 
 - **LLM** — a frontier chat model over OpenRouter (GLM 5.2; the model is hardcoded in
-  `cymbiont-model.ts`, the one swap point). Reached one of three ways, decided by
+  `myriapod-model.ts`, the one swap point). Reached one of three ways, decided by
   `resolveServingPath()` in `main.ts`:
   - **anon-free** — a $10-per-browser token minted at the proxy's `/anon-init`, spent through the proxy.
   - **family** — a redeemed credit code → a proxy-minted sub-key, spent through the proxy.
   - **own-key** — the visitor's own OpenRouter key, calling OpenRouter **directly** (bypasses the proxy).
   Reasoning is **off** for snappiness (a spoken agent can't afford a multi-second think) — see the
-  reasoning note in `cymbiont-model.ts`.
+  reasoning note in `myriapod-model.ts`.
 - **STT (batch)** — a moshi-server WebSocket (`/api/asr-streaming`). The whole utterance's PCM frames
   + a marker go up, the transcript comes back. `src/stt.ts`. Configured via `VITE_STT_BASE`.
 - **TTS (streaming)** — a moshi-server WebSocket (`/api/tts_streaming`). Sentence chunks stream up as
@@ -58,14 +56,14 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
 
 - **Frontend** — TypeScript fork of the `@earendil-works/pi-web-ui` example app (Lit 3 + mini-lit +
   Tailwind v4, Vite, static SPA). Retrieval, the personal graph, and ingestion all run in-page.
-- **One hardcoded model** (`src/cymbiont-model.ts`) — a frontier model over OpenRouter, reasoning off.
+- **One hardcoded model** (`src/myriapod-model.ts`) — a frontier model over OpenRouter, reasoning off.
   No model picker, no thinking-level selector. The cost field is approximate (the stats line); the
   proxy meters the *true* per-call cost from OpenRouter's usage.
 - **One knowledge graph** — the personal graph: mutable, per-browser, persisted to IndexedDB,
   **PPR-only** (no embeddings, no MMR). It starts empty and grows via ingestion. Writes are **opt-in**
   (a one-time consent gate).
-- **The Python `cymbiont/kg/` package is REFERENCE-ONLY** — `src/kg/` is a faithful TypeScript port
-  of it, but nothing calls Python at runtime.
+- **`src/kg/` is the retrieval + ingestion implementation** — pure TypeScript, running entirely
+  in-page over IndexedDB; there is no server-side retrieval.
 
 ## Repo Layout
 
@@ -85,7 +83,7 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
     audio-output-processor worklet on a ~1x realtime clock — the pacing Unmute's backend used to do
     (see the pacing note in the file); without it the worklet buffer overflows and garbles long replies.
     EOS = `{type:"Eos"}`; output frames = `{type:"Audio", pcm}`.
-  - **cymbiont-model.ts** — the single hardcoded chat model (GLM 5.2 over OpenRouter) + `proxyChatModel()`
+  - **myriapod-model.ts** — the single hardcoded chat model (GLM 5.2 over OpenRouter) + `proxyChatModel()`
     (the same model pointed at the metering proxy) + the proxy base/provider constants. Carries the
     load-bearing **reasoning note**: `reasoning:true` + `THINKING_LEVEL:"off"` makes pi-ai emit
     `reasoning:{effort:"none"}`, which the model honors as OFF — `reasoning:false` would send nothing and
@@ -111,9 +109,9 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
     download/import — the real durability story, since IndexedDB can be evicted).
   - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm` (maps the hidden
     `kg-context` breadcrumb to a user message for the model).
-  - **debug.ts** — `[cymbiont]`-prefixed instrumentation (dev-only; posts to the Vite `/__log` route).
+  - **debug.ts** — `[myriapod]`-prefixed instrumentation (dev-only; posts to the Vite `/__log` route).
   - **theme.css** / **app.css** — a black / white-text / neon-green palette over pi-web-ui's tokens.
-  - **kg/** — the TS retrieval + ingestion port (each module headers its Python source):
+  - **kg/** — the TS retrieval + ingestion implementation:
     - **graph.ts** — `Graph`: load + label/stem/term indexes + `termMatch`, plus the mutable personal-graph
       API (`getOrCreate` / `addLink` / `expireLink` / `serialize`) and `DescriptionTooLongError`.
     - **seeds.ts** · **ppr.ts** — seed extraction and networkx-faithful PageRank. (No `mmr.ts` — MMR was a
@@ -160,7 +158,7 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
   generating.
 - **Serving path + metering.** `resolveServingPath()` runs first in `createAgent`: own-key → the model
   pointed at OpenRouter direct; family/anon → `proxyChatModel()` (pointed at the proxy) with the proxy
-  bearer pre-seeded into the `cymbiont` provider slot. The first anonymous interaction (mic toggle or
+  bearer pre-seeded into the `myriapod` provider slot. The first anonymous interaction (mic toggle or
   send) pops the welcome modal, collects the honeypot + time-trap + BotD verdict, and mints the $10
   grant at `/anon-init`. Chat *and* ingestion ride the same path, so the proxy meters both against one
   principal. **Self-heal:** `ensureAnonGrant()` probes a stored grant token against `/balance` before

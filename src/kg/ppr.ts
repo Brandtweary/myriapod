@@ -1,7 +1,7 @@
-// Personalized PageRank retrieval — port of graph.py query_ppr + _build_nx_graph
-// + _follow_isa, with a faithful reproduction of networkx.pagerank's power
-// iteration (stochastic out-edge normalization, dangling-node redistribution via
-// the personalization vector, convergence at err < N*tol).
+// Personalized PageRank retrieval — query_ppr + graph construction + is-a
+// following, with a faithful reproduction of networkx.pagerank's power iteration
+// (stochastic out-edge normalization, dangling-node redistribution via the
+// personalization vector, convergence at err < N*tol).
 
 import {
 	INV_FREQ_ALPHA,
@@ -33,7 +33,7 @@ interface NxGraph {
 	degree: Map<string, number>; // in + out edge count (networkx DiGraph.degree)
 }
 
-// graph.py _build_nx_graph
+// build the directed graph for PageRank
 function buildNxGraph(graph: Graph): NxGraph {
 	const nodeIds: string[] = [];
 	const isNode = new Set<string>();
@@ -89,7 +89,7 @@ function buildNxGraph(graph: Graph): NxGraph {
 	return { nodeIds, isNode, adj, degree };
 }
 
-// graph.py _follow_isa
+// follow is-a edges for personalization decay
 function followIsa(
 	graph: Graph,
 	nodeId: string,
@@ -156,9 +156,9 @@ function pagerank(
 		for (const n of nodeIds) err += Math.abs(x.get(n)! - xlast.get(n)!);
 		if (err < N * tol) return x;
 	}
-	// networkx raises PowerIterationFailedConvergence here (Python falls back to
-	// BFS). On a graph this small it always converges well inside maxIter; return
-	// best-effort if it somehow doesn't.
+	// Power iteration would raise a non-convergence error here. On a graph this
+	// small it always converges well inside maxIter; return best-effort if it
+	// somehow doesn't.
 	return x;
 }
 

@@ -1,5 +1,4 @@
-// Types mirroring the Cymbiont KG store.json shape and retrieval outputs.
-// Reference: cymbiont/cymbiont/kg/graph.py (Thought dataclass, Triple, term_match).
+// The shapes for the serialized graph asset and the retrieval outputs.
 
 export interface Clause {
 	type: "because" | "with";
@@ -54,7 +53,7 @@ export interface TermMatch {
 	source?: RetrievalSource;
 }
 
-// PPR result (right gutter). Mirrors server.py's _triple_to_dict.
+// PPR result (right gutter).
 export interface Triple {
 	subject: string;
 	predicate: string;

@@ -1,9 +1,7 @@
-// Browser port of the Cymbiont graph engine — load + indexes + term-match, plus
-// the mutable graph API (getOrCreate / addLink / expireLink / serialize) that the
-// personal/user graph is built on.
-// Reference: cymbiont/cymbiont/kg/graph.py (load, _build_term_index, term_match,
-// _index_stem, and the mutation methods). PPR / seed extraction live in their own
-// modules and operate on a loaded Graph.
+// The graph engine — load + indexes + term-match, plus the mutable graph API
+// (getOrCreate / addLink / expireLink / serialize) that the personal/user graph
+// is built on. PPR / seed extraction live in their own modules and operate on a
+// loaded Graph.
 
 import { NLTK_ENGLISH_STOPWORDS } from "./stopwords";
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
@@ -25,8 +23,7 @@ function nowIso(): string {
 	return new Date().toISOString();
 }
 
-/** Mirror of graph.py DescriptionTooLongError — thrown at any write site when a
- *  node description exceeds the word cap. */
+/** Thrown at any write site when a node description exceeds the word cap. */
 export class DescriptionTooLongError extends Error {
 	constructor(
 		public readonly label: string,
@@ -54,7 +51,7 @@ export class Graph {
 		this.load(asset);
 	}
 
-	// -- graph.py load() --------------------------------------------------
+	// -- load() -----------------------------------------------------------
 	private load(asset: GraphAsset): void {
 		for (const [id, t] of Object.entries(asset.thoughts)) {
 			this.thoughts.set(id, t);
@@ -83,7 +80,7 @@ export class Graph {
 		set.add(t.id);
 	}
 
-	// -- mutation: CRUD ported from graph.py ------------------------------
+	// -- mutation: CRUD ---------------------------------------------------
 
 	/** Empty mutable graph — the personal/user graph starts here. */
 	static empty(): Graph {
@@ -119,7 +116,7 @@ export class Graph {
 		this.termMulti = [];
 	}
 
-	// graph.py get_or_create — label-upsert; on collision only description /
+	// getOrCreate — label-upsert; on collision only description /
 	// entity_type are updated (never weight). 100-word cap enforced before write.
 	getOrCreate(
 		label: string,
@@ -165,8 +162,8 @@ export class Graph {
 		return t;
 	}
 
-	// graph.py _find_link — returns the matching link Thought INCLUDING expired
-	// ones (the add_link reactivation branch depends on this).
+	// findLink — returns the matching link Thought INCLUDING expired
+	// ones (the addLink reactivation branch depends on this).
 	findLink(fromId: string, linkType: string, toId: string): Thought | null {
 		const src = this.thoughts.get(fromId);
 		if (!src) return null;
@@ -187,7 +184,7 @@ export class Graph {
 		return this.findLink(source.id, linkType, target.id) != null;
 	}
 
-	// graph.py add_link — implicit endpoint creation, reactivate-if-expired /
+	// addLink — implicit endpoint creation, reactivate-if-expired /
 	// merge-clauses-by-type on collision, auto-create commutative reverse.
 	addLink(
 		sourceLabel: string,
@@ -260,7 +257,7 @@ export class Graph {
 		return link;
 	}
 
-	// graph.py expire_link — soft-delete via expired_at + commutative reverse.
+	// expireLink — soft-delete via expired_at + commutative reverse.
 	expireLink(fromId: string, linkType: string, toId: string): Thought | null {
 		const link = this.findLink(fromId, linkType, toId);
 		if (!link?.link_data) return null;
@@ -294,7 +291,7 @@ export class Graph {
 		};
 	}
 
-	// -- graph.py _build_term_index() -------------------------------------
+	// -- buildTermIndex() -------------------------------------------------
 	private buildTermIndex(): void {
 		const termIndex = new Map<string, TermEntry>();
 
@@ -374,7 +371,7 @@ export class Graph {
 		if (!this.termIndexValid) this.buildTermIndex();
 	}
 
-	// -- graph.py term_match() --------------------------------------------
+	// -- termMatch() ------------------------------------------------------
 	termMatch(text: string): TermMatch[] {
 		this.ensureTermIndex();
 		const lowercased = text.toLowerCase();
