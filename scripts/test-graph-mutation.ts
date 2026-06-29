@@ -17,13 +17,13 @@ const edgeCount = (g: Graph) => [...g.thoughts.values()].filter((t) => !!t.link_
 // -- getOrCreate (label-upsert) --------------------------------------------
 {
 	const g = Graph.empty();
-	const a = g.getOrCreate("portland", 1, "A city in Oregon.", "place");
-	check("create returns node", a.label === "portland" && a.entity_type === "place");
-	check("get is case-insensitive", g.get("Portland")?.id === a.id);
+	const a = g.getOrCreate("lisbon", 1, "A city in Portugal.", "place");
+	check("create returns node", a.label === "lisbon" && a.entity_type === "place");
+	check("get is case-insensitive", g.get("Lisbon")?.id === a.id);
 
-	const a2 = g.getOrCreate("portland", 1, "A city in Oregon; the move target.");
+	const a2 = g.getOrCreate("lisbon", 1, "A city in Portugal; a popular destination.");
 	check("upsert hits same node", a2.id === a.id);
-	check("upsert updates description", a2.description === "A city in Oregon; the move target.");
+	check("upsert updates description", a2.description === "A city in Portugal; a popular destination.");
 	check("upsert creates no duplicate", nodeCount(g) === 1);
 }
 

@@ -1,4 +1,4 @@
-// Family-code minter. Brandt generates codes and hands them out; redeeming one
+// Family-code minter. The operator generates codes and hands them out; redeeming one
 // (via POST /redeem) provisions a $FAMILY_LIMIT OpenRouter sub-key + a token.
 //
 //   bun run mint-code.ts <code>

@@ -51,12 +51,12 @@ function check(name: string, cond: boolean): void {
 	const g = Graph.empty();
 	const stats = applyExtraction(g, {
 		entities: [
-			{ label: "portland", type: "place", summary: "A city in Oregon." },
+			{ label: "lisbon", type: "place", summary: "A city in Portugal." },
 			{ label: "brother", type: "person", summary: "The user's brother." },
 			{ label: "orphan-node", type: "concept", summary: "Referenced by nothing." },
 		],
 		relationships: [
-			{ subject: "user", predicate: "plans-trip-to", object: "portland", because: "moving there" },
+			{ subject: "user", predicate: "plans-trip-to", object: "lisbon", because: "a conference" },
 			{ subject: "user", predicate: "has", object: "brother" },
 		],
 		expirations: [],
@@ -65,14 +65,14 @@ function check(name: string, cond: boolean): void {
 	check("referenced entities added", stats.entitiesAdded === 2 && stats.newEntities === 2);
 	check("links created", stats.linksAdded === 2);
 	check("implicit endpoint node created", g.get("user") !== null);
-	check("relationship present", g.hasLink("user", "plans-trip-to", "portland"));
-	const link = g.findLink(g.get("user")!.id, "plans-trip-to", g.get("portland")!.id)!;
+	check("relationship present", g.hasLink("user", "plans-trip-to", "lisbon"));
+	const link = g.findLink(g.get("user")!.id, "plans-trip-to", g.get("lisbon")!.id)!;
 	check("because clause attached", link.link_data!.clauses?.some((c) => c.type === "because") === true);
 
 	// Existing edge: a second payload with a `with` clause merges only (no new link).
 	const stats2 = applyExtraction(g, {
 		relationships: [
-			{ subject: "user", predicate: "plans-trip-to", object: "portland", with: "in summer" },
+			{ subject: "user", predicate: "plans-trip-to", object: "lisbon", with: "next spring" },
 		],
 	});
 	check("existing edge → clause merge only, no new link", stats2.linksAdded === 0 && stats2.clausesMerged === 1);
@@ -80,7 +80,7 @@ function check(name: string, cond: boolean): void {
 
 	// Expiration applies only when both endpoints exist.
 	const stats3 = applyExtraction(g, {
-		expirations: [{ subject: "user", predicate: "plans-trip-to", object: "portland", reason: "cancelled" }],
+		expirations: [{ subject: "user", predicate: "plans-trip-to", object: "lisbon", reason: "cancelled" }],
 	});
 	check("expiration applied", stats3.expirationsApplied === 1 && g.isExpired(link));
 	const statsNo = applyExtraction(g, {
@@ -93,10 +93,10 @@ function check(name: string, cond: boolean): void {
 {
 	check("empty graph dump message", dumpExistingContext(Graph.empty()).includes("empty"));
 	const g = Graph.empty();
-	g.getOrCreate("portland", 1, "A city in Oregon.", "place");
-	g.addLink("portland", "is-a", "city");
+	g.getOrCreate("lisbon", 1, "A city in Portugal.", "place");
+	g.addLink("lisbon", "is-a", "city");
 	const dump = dumpExistingContext(g);
-	check("dump lists the node", dump.includes("- portland (place)"));
+	check("dump lists the node", dump.includes("- lisbon (place)"));
 	check("dump lists active edge", dump.includes("--is-a--> city"));
 }
 

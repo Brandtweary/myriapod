@@ -1,5 +1,5 @@
 /* ============================================================================
-   Cymbiont theme — Golgari (black / white text / neon-green accents)
+   Cymbiont theme — black base, white text, neon-green accents
    ============================================================================
    Overrides pi-web-ui's shadcn/Tailwind CSS-variable tokens. Loaded after the
    prebuilt stylesheet so these win. We override BOTH :root and .dark with the
@@ -220,7 +220,7 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 /* Provenance split. Personal-graph items keep the green default (the common
    case). STOCK-graph items are the rare, marked exception: a bright readable
    violet + serif, grouped below the user's own nodes under a subheading. Violet
-   is the Iris hue — nature almost never makes it, so it reads as "from the docs,
+   is a hue nature almost never makes, so it reads as "from the docs,
    not from you." Most users never ask about the KG, so it rarely shows at all. */
 .cw-gutter-sub {
 	margin-top: 0.45rem;

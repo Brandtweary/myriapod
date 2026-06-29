@@ -23,7 +23,7 @@ export type VoiceCaptureSeam = {
 
 // Ctrl+Space -- one-handed and effortless (pinky on Ctrl, thumb on Space, both bottom
 // row, right next to each other). Deliberately NOT Alt-based (Alt opens browser menus
-// and collides with Hyprland bindings); Space is also unclaimed by the browser, unlike
+// and collides with common window-manager bindings); Space is also unclaimed by the browser, unlike
 // most comfortable Ctrl+letter combos (Ctrl+B/E/G/etc. hit bookmarks/search/find). The
 // handler requires NO shift/alt/meta, so Ctrl+Shift+Space etc. won't trigger. One named
 // constant so the binding is a one-line change. `code` is layout-independent.
