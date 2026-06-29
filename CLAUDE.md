@@ -59,9 +59,11 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
   - **cascade.ts** — `CascadeSession`: the WebSocket client for the Unmute voice cascade. opus-recorder
     mic capture → `input_audio_buffer.append`; `response.audio.delta` Opus packets → decode →
     AudioWorklet playback. Surfaces user + assistant transcript deltas via callbacks. `commitTurn()`
-    ends the user's turn (flush the recorder, send `input_audio_buffer.commit` → the server flushes STT
-    and generates); `stopTts()` cuts the reply mid-utterance (barge-in / "shut up"); `updateInstructions()`
-    is the seam the KG layer uses to (re)inject context.
+    ends the user's turn (stop the recorder, send `input_audio_buffer.commit` → the server drains STT
+    and generates); `stopTts()` cuts the reply mid-utterance (barge-in / "shut up"); `setTtsMuted()` is
+    the persistent mute; `updateInstructions()` is the KG injection seam. The assistant transcript is
+    rendered from the LLM's `unmute.response.text.delta.ready` stream (always emitted, complete), NOT the
+    TTS-synced `response.text.delta` (which is absent when audio is muted/barged).
   - **cymbiont-model.ts** — the single hardcoded chat model: provider id `cymbiont`, `baseUrl` from
     `VITE_LLM_BASE`, reasoning off, zero cost. A throwaway bearer is seeded into the provider key slot
     so pi-web-ui's pre-send key check passes (the local server ignores it).
@@ -72,6 +74,9 @@ hits the LLM endpoint directly while the voice path goes through the full cascad
   - **memory-button.ts** — the memory-indicator button beside the mic. Reflects ingestion state
     (off / idle / armed / running); clicking force-flushes the queued ingestion (or offers the
     consent opt-in when off).
+  - **stop-audio-button.ts** — leftmost in the icon cluster. Single click cuts the current reply's
+    audio (the discoverable face of `Ctrl+Alt+Space`); double click toggles a persistent TTS mute
+    (speak-but-don't-listen, persisted in localStorage). Icon flips Volume2 ↔ VolumeX.
   - **consent-modal.ts** — the one-time memory opt-in modal, shown on the first interaction (first
     send OR first mic toggle). The choice persists per browser and is changeable in Settings → Memory.
   - **settings.ts** — `MemoryTab` (consent on/off toggle) and `ExportTab` (personal-graph

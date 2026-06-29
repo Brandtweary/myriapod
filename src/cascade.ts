@@ -119,6 +119,14 @@ export class CascadeSession {
 	// on) so the fresh STT leg gets a new OggOpus header — a mid-stream resume would be
 	// header-less and undecodable.
 	private recording = false;
+	// Barge-in: when the user cuts the agent off (mic toggle-on or Ctrl+Alt+Space) we
+	// drop the rest of the in-flight TTS audio WITHOUT stopping the LLM — the response
+	// keeps streaming into the transcript, we just stop speaking it aloud. Cleared when
+	// the next response starts.
+	private playbackMuted = false;
+	// Persistent "don't speak" toggle (double-click the stop-audio button) — for users
+	// who want speech-in without speech-out. Unlike playbackMuted, never auto-cleared.
+	private ttsMutedPermanent = false;
 	// The latest instructions pushed via updateInstructions (the live KG context),
 	// replayed on reconnect so the recovered session keeps the most recent injection.
 	private lastInstructions?: string;
@@ -158,15 +166,18 @@ export class CascadeSession {
 		this.setState("closed");
 	}
 
-	// End the user's turn (cymbiont fork): the mic toggled off. Server VAD no longer
-	// ends turns, so we flush the recorder — awaiting its final page so the trailing
-	// words are SENT before the commit (otherwise they're lost: the transcript race) —
-	// then send input_audio_buffer.commit, which makes the backend flush the STT and
-	// generate. The WebSocket and playback stay live (the conversation continues).
+	// End the user's turn (cymbiont fork): the mic toggled off and the caller already
+	// waited for the transcript to settle (see finishVoiceTurn), so all the user's audio
+	// has reached the STT. Stop the recorder and send input_audio_buffer.commit, which
+	// makes the backend drain the STT and generate. The WebSocket and playback stay live.
 	async commitTurn(): Promise<void> {
 		this.recording = false;
+		// Bounded so a wedged encoder can't hang the turn (the commit must still fire).
 		try {
-			await this.pipeline?.opusRecorder.stop();
+			await Promise.race([
+				this.pipeline?.opusRecorder.stop() ?? Promise.resolve(),
+				new Promise<void>((resolve) => setTimeout(resolve, 800)),
+			]);
 		} catch (err) {
 			dbg(`[cascade] commitTurn: recorder stop ${String(err)}`);
 		}
@@ -180,12 +191,29 @@ export class CascadeSession {
 	// clears the audio output worklet's frame buffer (barge-in / "shut up"). The
 	// conversation stays live; the next response plays normally.
 	stopTts(): void {
+		// Mute first: clearing the worklet buffer alone doesn't stop playback, because
+		// the decoder keeps refilling it from audio.delta packets still arriving for the
+		// in-flight response (the LLM is NOT interrupted). Muting drops those until the
+		// next response starts.
+		this.playbackMuted = true;
 		try {
 			this.pipeline?.outputWorklet.port.postMessage({ type: "reset" });
-			dbg("[cascade] TTS cut (output buffer cleared)");
+			dbg("[cascade] TTS cut (muted until next response)");
 		} catch (err) {
 			dbg(`[cascade] stopTts: ${String(err)}`);
 		}
+	}
+
+	// Persistent mute toggle (the stop-audio button's double-click). Muting cuts any
+	// current audio; unmuting also clears a transient barge-in mute so sound resumes.
+	setTtsMuted(muted: boolean): void {
+		this.ttsMutedPermanent = muted;
+		if (muted) {
+			this.pipeline?.outputWorklet.port.postMessage({ type: "reset" });
+		} else {
+			this.playbackMuted = false;
+		}
+		dbg(`[cascade] TTS ${muted ? "muted (persistent)" : "unmuted"}`);
 	}
 
 	// Resume recording on the existing live conversation (mic toggled back on). Restarts
@@ -411,7 +439,7 @@ export class CascadeSession {
 		}
 		switch (data.type) {
 			case "response.audio.delta": {
-				if (!data.delta || !this.pipeline) return;
+				if (this.playbackMuted || this.ttsMutedPermanent || !data.delta || !this.pipeline) return;
 				const opus = base64DecodeOpus(data.delta);
 				this.pipeline.decoder.postMessage({ command: "decode", pages: opus }, [opus.buffer]);
 				return;
@@ -421,11 +449,16 @@ export class CascadeSession {
 				// leading space so they don't run together (same as the assistant path).
 				if (data.delta) this.cb.onUserTranscript?.(" " + data.delta);
 				return;
-			case "response.text.delta":
-				// TTS text omits leading spaces; add one so words don't run together.
-				if (data.delta) this.cb.onAssistantTranscript?.(" " + data.delta);
+			case "unmute.response.text.delta.ready":
+				// Render the LLM's generated text — NOT response.text.delta (the
+				// TTS-synced variant). The TTS deltas are absent or partial whenever the
+				// audio is muted or barged over, which left those replies unrendered;
+				// the .ready deltas are always emitted, complete, and already spaced.
+				if (data.delta) this.cb.onAssistantTranscript?.(data.delta);
 				return;
 			case "response.created": {
+				// A new response is starting — unmute playback (a prior barge-in muted it).
+				this.playbackMuted = false;
 				// Injection verification: response.created carries the full chat_history
 				// the server is about to send to the LLM; chat_history[0] is the system
 				// prompt. Confirm our injected <kg-context> block actually reached the
@@ -458,8 +491,9 @@ export class CascadeSession {
 			}
 			default:
 				// session.updated, response.done, audio.done, speech_started,
-				// speech_stopped (the server still emits it on commit, but the client
-				// drives the turn now), unmute.* readiness pings — nothing to do.
+				// speech_stopped (server still emits on commit; the client drives the
+				// turn), response.text.delta (the TTS-synced text — we render the LLM's
+				// .ready deltas instead), other unmute.* pings — nothing to do.
 				return;
 		}
 	}

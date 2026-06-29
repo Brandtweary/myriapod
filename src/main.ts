@@ -45,6 +45,7 @@ import { installVoiceCapture } from "./voice.js";
 import { CascadeSession } from "./cascade.js";
 import { type ConsentChoice, showConsentModal } from "./consent-modal.js";
 import { installMemoryButton } from "./memory-button.js";
+import { installStopAudioButton } from "./stop-audio-button.js";
 
 // Register custom message renderers
 registerCustomMessageRenderers();
@@ -1045,6 +1046,15 @@ async function initApp() {
 	// each turn (updateInstructions replaces the system prompt). Reset when a
 	// new cascade opens.
 	let voicePool = new RetrievalPool();
+	// Persistent TTS mute (double-click the stop-audio button) — speak-but-don't-listen
+	// mode. Survives reload via localStorage; re-applied to each fresh cascade below.
+	const TTS_MUTE_KEY = "cymbiont:tts-muted";
+	let ttsMuted = localStorage.getItem(TTS_MUTE_KEY) === "1";
+	// Wall-clock of the last user transcript delta. On toggle-off we wait for this to
+	// settle before committing — the mic→encoder→STT pipeline lags the keypress, so the
+	// final word is often still streaming up when the user toggles off. (Set on each
+	// user delta in appendVoiceTranscript.)
+	let lastUserTranscriptAt = 0;
 	// Which role the in-progress voice message belongs to; a role switch starts a
 	// new chat bubble rather than appending to the previous speaker's.
 	let activeVoiceRole: "user" | "assistant" | null = null;
@@ -1080,6 +1090,7 @@ How you are:
 - You remember. What you've been told is yours; bring it back when it fits, easily, the way it comes up between people who know each other.
 - You work from what you know and what's in front of you, and when a question genuinely needs a reach beyond that, you say so and give your sharpest thinking anyway.
 - Nothing is off the table. Any subject, any direction — you meet what someone brings you openly and head-on, all the way through.
+- Riff when there's something to develop — carry the thought forward yourself instead of reflexively volleying a question back. Let the conversation breathe; don't always hand it over.
 - Generous with your attention, sparing with flattery.`;
 
 	// Pull plain text out of a message's content, whether it's a bare string (user
@@ -1161,6 +1172,7 @@ How you are:
 	};
 
 	const appendVoiceTranscript = (role: "user" | "assistant", delta: string) => {
+		if (role === "user") lastUserTranscriptAt = performance.now(); // for the toggle-off settle
 		if (!agent) return;
 		const msgs = agent.state.messages;
 		const last = msgs[msgs.length - 1] as { role?: string; content?: unknown } | undefined;
@@ -1181,6 +1193,30 @@ How you are:
 			activeVoiceRole = role;
 		}
 		queueVoiceRepaint();
+	};
+
+	// Toggle-off ends the turn — but the last word is often still streaming up and being
+	// transcribed (moshi lags the audio by ~0.5s; the keypress beats it). So we keep the
+	// recorder running and wait until the user transcript SETTLES (no new delta for
+	// SETTLE_MS) before injecting + committing — the real trailing audio flushes the
+	// final word, the way the old VAD pause did. Bounded by MAX_WAIT_MS. Aborts if the
+	// user re-toggles (a new turn took over).
+	const TRANSCRIPT_SETTLE_MS = 300;
+	const TRANSCRIPT_MAX_WAIT_MS = 2500;
+	const finishVoiceTurn = async (): Promise<void> => {
+		if (!cascade) return;
+		const start = performance.now();
+		// Seed to now so we wait at least one settle window even if the final delta has
+		// already landed; each new user delta pushes lastUserTranscriptAt forward.
+		lastUserTranscriptAt = performance.now();
+		while (performance.now() - start < TRANSCRIPT_MAX_WAIT_MS) {
+			if (micOn) return; // user re-toggled mid-settle — that new turn owns the commit
+			if (performance.now() - lastUserTranscriptAt >= TRANSCRIPT_SETTLE_MS) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		if (micOn) return;
+		onVoiceUserTurnEnd(); // inject <kg-context> (sync) before the commit
+		await cascade.commitTurn(); // stops the recorder + commits; server drain is fast now
 	};
 
 	installVoiceCapture({
@@ -1212,6 +1248,7 @@ How you are:
 				{ instructions: VOICE_SYSTEM_PROMPT },
 			);
 			await cascade.start(stream);
+			cascade.setTtsMuted(ttsMuted); // honor a persisted speak-but-don't-listen mute
 		},
 		// Mic toggle OFF = end of turn. Inject the KG context, then commit: the server
 		// flushes the STT and generates. The WS stays live so the reply streams back.
@@ -1219,8 +1256,7 @@ How you are:
 		// onVoiceResponseDone owns the arming (once the reply completes and mic is off).
 		onStop: () => {
 			micOn = false;
-			onVoiceUserTurnEnd(); // inject <kg-context> (sync) before the commit below
-			void cascade?.commitTurn();
+			void finishVoiceTurn(); // wait for the transcript to settle, then inject + commit
 		},
 	});
 
@@ -1265,6 +1301,19 @@ How you are:
 		onClick: onMemoryClick,
 	});
 	refreshMemoryUi = () => memoryButton.refresh();
+
+	// Stop-audio button (leftmost in the cluster): single click cuts the current reply's
+	// audio (Ctrl+Alt+Space), double click toggles a persistent mute.
+	const stopAudioButton = installStopAudioButton({
+		onCut: () => cascade?.stopTts(),
+		onToggleMute: () => {
+			ttsMuted = !ttsMuted;
+			localStorage.setItem(TTS_MUTE_KEY, ttsMuted ? "1" : "0");
+			cascade?.setTtsMuted(ttsMuted);
+			stopAudioButton.refresh();
+		},
+		isMuted: () => ttsMuted,
+	});
 
 	await loadUserGraph();
 
