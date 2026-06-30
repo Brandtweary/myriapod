@@ -291,6 +291,53 @@ export class Graph {
 		};
 	}
 
+	// -- searchText() -----------------------------------------------------
+	// A LITERAL substring/term search for the kg_search tool — distinct from
+	// termMatch (which is term-index-driven, descriptions-only, and runs the
+	// inverse direction) and from the PPR retrieval path. Lowercased `.includes`
+	// over each node's label + description; also scans live edges and folds in
+	// their endpoint nodes when the query hits an endpoint label or the
+	// link_type/predicate. Ranked by hit_count desc. Default limit 50, hard cap 100.
+	searchText(query: string, limit = 50): { label: string; description: string; hit_count: number }[] {
+		const q = query.trim().toLowerCase();
+		if (!q) return [];
+		const cap = Math.min(Math.max(limit, 1), 100);
+		const matchedIds = new Set<string>();
+
+		for (const t of this.thoughts.values()) {
+			if (this.isLink(t)) continue;
+			if (t.label.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q)) {
+				matchedIds.add(t.id);
+			}
+		}
+
+		// Live edges: include both endpoint nodes when the query matches an endpoint
+		// label or the predicate (link_type).
+		for (const t of this.thoughts.values()) {
+			if (!this.isLink(t) || this.isExpired(t)) continue;
+			const ld = t.link_data!;
+			const from = this.thoughts.get(ld.from_id);
+			const to = this.thoughts.get(ld.to_id);
+			const hit =
+				ld.link_type.toLowerCase().includes(q) ||
+				(from?.label.toLowerCase().includes(q) ?? false) ||
+				(to?.label.toLowerCase().includes(q) ?? false);
+			if (hit) {
+				if (from && !this.isLink(from)) matchedIds.add(from.id);
+				if (to && !this.isLink(to)) matchedIds.add(to.id);
+			}
+		}
+
+		const results: { label: string; description: string; hit_count: number }[] = [];
+		for (const id of matchedIds) {
+			const node = this.thoughts.get(id);
+			if (!node) continue;
+			results.push({ label: node.label, description: node.description ?? "", hit_count: node.hit_count });
+		}
+		results.sort((a, b) => b.hit_count - a.hit_count);
+		return results.slice(0, cap);
+	}
+
 	// -- buildTermIndex() -------------------------------------------------
 	private buildTermIndex(): void {
 		const termIndex = new Map<string, TermEntry>();

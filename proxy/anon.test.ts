@@ -110,3 +110,31 @@ test("chat with an unknown bearer → 401", async () => {
 	});
 	expect(res.status).toBe(401);
 });
+
+// Web search is no longer principal-gated — it's open (per-IP rate-limited). Without
+// a bearer the request now sails past auth and hits the query check, so a missing q
+// is a 400, not a 401.
+test("web-search without a bearer → reaches the query check → 400 on missing q", async () => {
+	const res = await app.request("/v1/web-search", { headers: { "x-forwarded-for": "198.51.100.1" } });
+	expect(res.status).toBe(400);
+});
+
+test("web-search with an unknown bearer → no longer rejected; 400 on missing q", async () => {
+	const res = await app.request("/v1/web-search", {
+		headers: { Authorization: "Bearer deadbeef", "x-forwarded-for": "198.51.100.2" },
+	});
+	expect(res.status).toBe(400);
+});
+
+test("web-search per-IP rate limit → 429 once the window is exceeded", async () => {
+	const ip = "203.0.113.9"; // a single IP fired repeatedly (no q → cheap 400s until limited)
+	let saw429 = false;
+	for (let i = 0; i < 50; i++) {
+		const res = await app.request("/v1/web-search", { headers: { "x-forwarded-for": ip } });
+		if (res.status === 429) {
+			saw429 = true;
+			break;
+		}
+	}
+	expect(saw429).toBe(true);
+});

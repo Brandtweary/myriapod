@@ -21,10 +21,19 @@ import { config } from "./config";
 import { Db } from "./db";
 import { forwardCompletion, mintSubKey } from "./openrouter";
 import { grantGatesPass } from "./anon";
+import { VoiceBroker, registerVoiceRoutes } from "./voice-broker";
 import type { Context } from "hono";
 
 const db = new Db(config.dbPath);
 const app = new Hono();
+
+// Voice-session broker — in-memory leases over the configured moshi instance(s).
+// Ephemeral concurrency state, not money; a restart just resets the counts.
+const voiceBroker = new VoiceBroker({
+	instances: config.voiceInstances,
+	capacity: config.voiceInstanceCapacity,
+	heartbeatSec: config.voiceHeartbeatSec,
+});
 
 app.use(
 	"*",
@@ -46,6 +55,10 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Voice-session broker routes (POST /voice/lease | /heartbeat | /release).
+// Registered after the CORS + access-log middleware so both apply.
+registerVoiceRoutes(app, voiceBroker);
 
 /** The bearer token presented by the client, or "" if none. The legacy "anon"
  *  placeholder (sent before a real token exists) is treated as no-bearer. */
@@ -80,6 +93,59 @@ app.get("/balance", (c) => {
 		return c.json({ tier: "free", remaining: p.credit_remaining, grant: config.freeGrant });
 	}
 	return c.json({ tier: "free", remaining: config.freeGrant, grant: config.freeGrant });
+});
+
+// In-memory per-IP sliding-window rate limit for the open web-search proxy. Web
+// search is table-stakes for every visitor (own-key included), so the endpoint is
+// NOT principal-gated — CORS already scopes browser callers to the site, and this
+// window stops non-browser abuse of the open SearXNG passthrough. Not money, so it
+// is not metered; a restart just resets the counts.
+const WEB_SEARCH_WINDOW_MS = 60_000;
+const WEB_SEARCH_MAX = 40;
+const webSearchHits = new Map<string, number[]>();
+function webSearchRateLimited(ip: string): boolean {
+	const now = Date.now();
+	const cutoff = now - WEB_SEARCH_WINDOW_MS;
+	const hits = (webSearchHits.get(ip) ?? []).filter((t) => t > cutoff);
+	hits.push(now);
+	webSearchHits.set(ip, hits);
+	return hits.length > WEB_SEARCH_MAX;
+}
+
+// Open (rate-limited) web search. Proxies a query to the self-hosted SearXNG and
+// returns a trimmed result list. Universal — every serving path may call it; the
+// per-IP window above is the only guard. NOT metered (SearXNG is self-hosted/free).
+app.get("/v1/web-search", async (c) => {
+	if (webSearchRateLimited(clientIp(c))) {
+		return c.json({ error: "rate limit — slow down" }, 429);
+	}
+
+	const q = c.req.query("q")?.trim() ?? "";
+	if (!q) return c.json({ error: "missing query (q)" }, 400);
+	const limitParam = Number(c.req.query("limit"));
+	const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 10) : 8;
+
+	let res: Response;
+	try {
+		res = await fetch(
+			`${config.searxngBase}/search?q=${encodeURIComponent(q)}&format=json&safesearch=0`,
+			{ headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000) },
+		);
+	} catch (err) {
+		console.error("[proxy] searxng fetch failed:", err);
+		return c.json({ error: "searxng unreachable" }, 502);
+	}
+	if (!res.ok) {
+		return c.json({ error: `searxng ${res.status}` }, 502);
+	}
+
+	const data = (await res.json()) as { results?: Array<Record<string, unknown>> };
+	const results = (data.results ?? []).slice(0, limit).map((r) => ({
+		title: (r.title as string) || "Untitled",
+		url: r.url as string,
+		snippet: (r.content as string) || (r.abstract as string) || "",
+	}));
+	return c.json({ results });
 });
 
 // Establish (or recover) an anonymous free-tier principal and return its token.
@@ -313,4 +379,4 @@ if (import.meta.main) {
 	Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch });
 }
 
-export { app, db };
+export { app, db, voiceBroker };

@@ -8,9 +8,10 @@ rather than hidden behind the generation.
 
 The **browser orchestrates** the whole loop: batch speech-to-text → a frontier LLM → streaming
 text-to-speech, all driven in-page. The LLM is reached through a small **metering proxy** (a $10
-free tier, family codes, or bring-your-own-key); the STT/TTS legs are self-hosted open-weight
-[Kyutai moshi](https://github.com/kyutai-labs/moshi) models. The "run it yourself" story points
-people at those open components.
+free tier, family codes, or bring-your-own-key); the STT leg is a self-hosted
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) server (HTTP), and the TTS leg is a
+self-hosted open-weight [Kyutai moshi](https://github.com/kyutai-labs/moshi) model (WebSocket). The
+"run it yourself" story points people at those open components.
 
 Motto: **maximal reuse** — lean on the framework and existing components; writing logic from scratch
 (outside the new UI) is a red flag.
@@ -35,8 +36,10 @@ typed chat; the browser reaches three external services:
   - **own-key** — the visitor's own OpenRouter key, calling OpenRouter **directly** (bypasses the proxy).
   Reasoning is **off** for snappiness (a spoken agent can't afford a multi-second think) — see the
   reasoning note in `myriapod-model.ts`.
-- **STT (batch)** — a moshi-server WebSocket (`/api/asr-streaming`). The whole utterance's PCM frames
-  + a marker go up, the transcript comes back. `src/stt.ts`. Configured via `VITE_STT_BASE`.
+- **STT (batch)** — a self-hosted Whisper HTTP endpoint. The whole utterance's PCM is resampled
+  24 kHz → 16 kHz, encoded as a 16-bit mono WAV, and POSTed as `multipart/form-data`; the server
+  returns `{"text":...}` JSON. Stateless — no socket, no marker protocol. `src/stt.ts`. Configured
+  via `VITE_STT_BASE`.
 - **TTS (streaming)** — a moshi-server WebSocket (`/api/tts_streaming`). Sentence chunks stream up as
   the LLM generates; raw 24 kHz PCM frames (`PcmMessagePack`) stream back and are paced to ~1x realtime
   (moshi bursts faster than realtime) before posting to the audio-output-processor worklet — no Opus
@@ -74,8 +77,8 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
     **the voice TTS tap**), gutter rendering, the voice capture wiring (STT → `agent.prompt` → tap →
     TTS), personal-graph load/save, memory-consent state, and session management.
   - **stt.ts** — batch speech-to-text. `PcmRecorder` (a mic AudioWorklet capturing 24 kHz Float32) +
-    `SttClient` (a moshi `/api/asr-streaming` msgpack WS: push PCM + a marker, collect the transcript).
-    Browser auth is the `auth_id` query param (browsers can't set WS headers).
+    `WhisperClient` (stateless HTTP: resample 24 → 16 kHz, encode a 16-bit mono WAV via `DataView`,
+    POST it as `multipart/form-data`, return `{"text"}`). `connect()`/`close()` are no-ops.
   - **tts.ts** — streaming text-to-speech. A token→sentence `SentenceChunker`, and `KyutaiTtsSynthesizer`
     (the `SpeechSynthesizer` seam: `speak(textStream)` / `speak(text)` / `stop()`) over a moshi
     `/api/tts_streaming` msgpack WS — sentence in (one session per sentence), raw PCM out
@@ -107,8 +110,19 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
   - **settings.ts** — `MemoryTab` (consent toggle), `OpenRouterKeyTab` (the **Access** tab: bring-your-own
     OpenRouter key + family-code redemption + hosted-balance readout), and `ExportTab` (personal-graph
     download/import — the real durability story, since IndexedDB can be evicted).
-  - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm` (maps the hidden
-    `kg-context` breadcrumb to a user message for the model).
+  - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm`. Maps the hidden
+    `kg-context` breadcrumb and the `compactionSummary` (wrapped in the canonical prefix/suffix) to user
+    messages for the model; renders the `voice-pending` placeholder (a user-side bubble with an undulating
+    typing-indicator) shown while the mic records. `voice-pending` has no `convertToLlm` case, so it stays
+    model-invisible and is removed before the real transcript lands.
+  - **kg-tools.ts** — two native Pi `AgentTool`s over the personal graph: `kg_search` (literal text
+    search via `Graph.searchText`) and `kg_dump` (bounded top-N graph overview, hard-capped at 500 nodes
+    to protect the context window). Plus their compact tool renderers. Tools take a `() => Graph` accessor
+    (the graph is reassigned on import/delete).
+  - **web-tools.ts** — the browser half of `web_search`: a `fetch` to the proxy's `/v1/web-search`
+    + the `AgentTool` + its renderer. Registered on **every** serving path — web search is universal.
+    The endpoint is open (per-IP rate-limited, not principal-gated): owner-funded paths send their proxy
+    bearer, own-key sends none (so its OpenRouter key never reaches the proxy).
   - **debug.ts** — `[myriapod]`-prefixed instrumentation (dev-only; posts to the Vite `/__log` route).
   - **theme.css** / **app.css** — a black / white-text / neon-green palette over pi-web-ui's tokens.
   - **kg/** — the TS retrieval + ingestion implementation:
@@ -127,19 +141,32 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
     - **stem.ts** — Porter stemmer (opt-in, effectively unused) + always-on `depluralize()`.
     - **config.ts** · **types.ts** · **stopwords.ts** — tunables, shapes, NLTK stopword list.
 - **proxy/** — the metering backend (Bun, never bundled into the frontend). `server.ts` (Hono app:
-  `/anon-init`, `/v1/chat/completions`, `/redeem`, `/balance`, `/health`), `db.ts` (`bun:sqlite`:
+  `/anon-init`, `/v1/chat/completions`, `/redeem`, `/balance`, `/health`, `/voice/*`), `db.ts` (`bun:sqlite`:
   principals / usage_log / family_codes / anon_ips), `openrouter.ts` (forward + meter; mint sub-keys),
-  `anon.ts` (the grant gates), `config.ts`, `mint-code.ts` (CLI to mint family codes), `anon.test.ts`.
+  `anon.ts` (the grant gates), `voice-broker.ts` (the voice-session broker, below), `config.ts`,
+  `mint-code.ts` (CLI to mint family codes), `anon.test.ts` + `voice-broker.test.ts`.
   Real keys + caps live in `proxy/.env` (gitignored); `.env.example` documents the shape.
+  - **voice-broker.ts** — load-balances browser voice sessions across the configured moshi instance(s)
+    with overflow queuing. In-memory, ephemeral leases (concurrency state, not money — a restart resets
+    counts); capacity per instance = the moshi TTS `batch_size` (STT is now a shared Whisper endpoint, so
+    the leased per-instance `sttUrl` is vestigial — `WhisperClient` ignores it). Routes (registered on the shared Hono app
+    after CORS): `POST /voice/lease` → least-loaded instance with a free slot, else `202 {queued, position}`;
+    `POST /voice/heartbeat` (60s keepalive; `404` on unknown lease); `POST /voice/release` (tolerates a
+    `sendBeacon` text/plain body). A TTL sweeper (3× heartbeat) reclaims leases from tabs that closed
+    without releasing. Config: `VOICE_INSTANCES` (JSON array of `{sttUrl,ttsUrl}`; defaults to ONE instance
+    from `VOICE_STT_BASE`/`VOICE_TTS_BASE`), `VOICE_INSTANCE_CAPACITY` (default 1), `VOICE_HEARTBEAT_SEC`.
+    Frontend wiring is gated on `VITE_VOICE_BROKER` (default off = the single-instance demo unchanged).
 - **scripts/** — dev-time tooling (TS, never shipped): **test-graph-mutation.ts** and **test-ingest.ts**.
 - **public/** — static assets fetched at runtime: the audio-output worklet (`audio-output-processor.js`,
   playback) and the mic-capture worklet (`pcm-recorder-processor.js`), ported from Unmute's frontend so
-  the wire format matches. Both audio legs are raw PCM (STT sends PCM, TTS receives PCM), so no Opus
-  encode/decode runs in the browser.
+  the wire format matches. Neither audio leg uses Opus (STT POSTs a 16-bit PCM WAV, TTS receives raw
+  PCM), so no Opus encode/decode runs in the browser.
 - **vite.config.ts** — Tailwind, a dev `/__log` middleware, and a **build-only** CSP injector
   (`script-src 'self'`; `connect-src` = self + OpenRouter + the proxy origin + the STT/TTS WS origins,
   derived from `VITE_PROXY_BASE` / `VITE_STT_BASE` / `VITE_TTS_BASE`).
-- **.env.local** — dev frontend config (NO keys): `VITE_PROXY_BASE` and the optional voice WS overrides.
+- **.env.local** — dev frontend config (NO keys): `VITE_PROXY_BASE`, the optional voice WS overrides, and
+  the optional `VITE_VOICE_BROKER` flag (default off; on = route voice through the proxy's `/voice/*` broker
+  with leased per-instance STT/TTS URLs instead of the single hardcoded base).
 - **index.html** · **tsconfig.json** · **package.json** — SPA scaffold, TS config, pinned deps.
 
 ## How it works (the non-obvious parts)
@@ -150,12 +177,25 @@ GPU-hosted STT/TTS (so the site survives the GPU lease lapsing — TTS/STT sit b
   to `agent.state.messages`. The breadcrumb accumulates across turns (like Claude Code's
   `additionalContext`), so a per-session **ledger** dedup is correct rather than lossy. The gutters
   deliberately show the pre-dedup vacuum (the "small lie" — what *would* retrieve this turn).
-- **The voice TTS tap.** A voice-initiated turn sets `pendingVoiceResponse`; on the assistant's
-  `message_start` the lifecycle listener opens a TTS speaker and streams the assistant's `text_delta`s
-  into an async queue the synthesizer drains through its sentence chunker; `message_end` closes the queue.
-  The listener stays cheap (the core *awaits* each listener — heavy work stalls the run). Typed turns
-  leave the gate false and stream silently. Barge-in cuts only the audio (`synth.stop()`); the LLM keeps
-  generating.
+- **History bounding (compaction).** The `agent.prompt` wrapper, before retrieval, estimates context
+  tokens and — once over `DEFAULT_COMPACTION_SETTINGS` threshold — summarizes the older messages and
+  replaces them with a single `compactionSummary` message (recent turns kept, cut on a user boundary so a
+  turn is never split). Uses pi-agent-core's message-level primitives (`shouldCompact`,
+  `estimateContextTokens`, `estimateTokens`, `generateSummary`, `createCompactionSummaryMessage`); the
+  high-level `compact()`/`prepareCompaction()` are SessionTree-oriented and don't fit the flat message
+  array. `customConvertToLlm` MUST keep a `compactionSummary` case or the summary is dropped and history
+  vanishes. At ~1M context this rarely fires.
+- **The voice TTS tap.** A voice-initiated turn sets `voiceTurnSpeaking`, held for the *whole* turn
+  (across any tool-call round-trip) and retired only at `agent_end`. The lifecycle listener lazily opens
+  a TTS speaker on the **first `text_delta` of each assistant message** — never on `message_start` — and
+  streams that message's `text_delta`s into an async queue the synthesizer drains through its sentence
+  chunker; `message_end` closes the queue. Lazy-open is what makes tool turns work: the tool-call
+  assistant message (little/no spoken text) never opens a speaker, while the *final* answer — a separate
+  assistant message emitted after the tool result — opens its own speaker and speaks. `toolResult`
+  messages never emit `text_delta`, so they stay silent. The listener stays cheap (the core *awaits* each
+  listener — heavy work stalls the run). Typed turns leave `voiceTurnSpeaking` false and stream silently.
+  Barge-in cuts only the audio (`synth.stop()` + a `voiceMsgDone` guard so trailing deltas don't re-open
+  a speaker); the LLM keeps generating.
 - **Serving path + metering.** `resolveServingPath()` runs first in `createAgent`: own-key → the model
   pointed at OpenRouter direct; family/anon → `proxyChatModel()` (pointed at the proxy) with the proxy
   bearer pre-seeded into the `myriapod` provider slot. The first anonymous interaction (mic toggle or
@@ -185,9 +225,12 @@ The bundled example app is broken in all published versions; these are load-bear
   fires — we bind to the raw lifecycle events instead.)
 - **Mount-once ChatPanel** — the panel is self-sufficient; mount it once outside the reactive render root
   and never re-render it (re-committing it mid-turn wiped the stream). Toggle visibility only.
-- **Artifacts stripped** — `ChatPanel` hardwires an `artifacts` tool + side panel regardless of
-  `toolsFactory`. We clear `agent.state.tools` after `setAgent`. (A demo's audience isn't doing HTML
-  prototyping; the KG-search tool is a planned later phase.)
+- **Artifacts overwritten with real tools** — `ChatPanel` hardwires an `artifacts` tool + side panel
+  regardless of `toolsFactory` (it prepends `[artifactsPanel.tool, ...toolsFactory()]`). We reassign
+  `agent.state.tools` after `setAgent` to our own set — `kg_search` + `kg_dump`, plus `web_search` on the
+  owner-funded paths — which drops the artifacts tool and its side panel. The single reassignment covers
+  newSession AND loadSession (the per-turn context snapshot and the prompt wrapper don't touch
+  `state.tools`).
 - **Listener async-safety** — core awaits each listener; a throw or heavy work stalls the run and wipes
   the in-flight message. The whole listener body is try/caught and only re-renders on meaningful events.
 

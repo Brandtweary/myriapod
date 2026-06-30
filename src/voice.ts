@@ -134,6 +134,15 @@ export class VoiceController {
 		this.seam.onStop?.();
 	}
 
+	// Abort an in-progress recording back to idle WITHOUT firing onStop. Used when the
+	// transport refuses the turn after recording started (e.g. no voice slot is free),
+	// so the mic stream is released but no empty turn is sent.
+	cancel(): void {
+		this.stream?.getTracks().forEach((t) => t.stop());
+		this.stream = undefined;
+		this.setState("idle");
+	}
+
 	private setState(s: State): void {
 		this.state = s;
 		this.renderButton();

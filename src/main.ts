@@ -1,4 +1,13 @@
-import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	createCompactionSummaryMessage,
+	DEFAULT_COMPACTION_SETTINGS,
+	estimateContextTokens,
+	estimateTokens,
+	generateSummary,
+	shouldCompact,
+} from "@earendil-works/pi-agent-core";
 import type { Model, TextContent } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
@@ -35,23 +44,28 @@ import { load as loadBotd } from "@fingerprintjs/botd";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
 	createKgContextMessage,
+	createVoicePendingMessage,
 	customConvertToLlm,
 	registerCustomMessageRenderers,
 } from "./custom-messages.js";
+import { createKgDumpTool, createKgSearchTool, registerKgToolRenderers } from "./kg-tools.js";
+import { createWebSearchTool, registerWebToolRenderer } from "./web-tools.js";
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
 import { retrieve } from "./kg/retrieve.js";
 import { makeCompletion, runIngestion } from "./kg/ingest.js";
 import type { GraphAsset, TermMatch, Triple } from "./kg/types.js";
 import { installVoiceCapture } from "./voice.js";
-import { PcmRecorder, SttClient } from "./stt.js";
+import { PcmRecorder, WhisperClient } from "./stt.js";
 import { KyutaiTtsSynthesizer, TTS_SAMPLE_RATE } from "./tts.js";
 import { type ConsentChoice, showConsentModal } from "./consent-modal.js";
 import { installMemoryButton } from "./memory-button.js";
 import { installStopAudioButton } from "./stop-audio-button.js";
 
-// Register custom message renderers
+// Register custom message + tool renderers
 registerCustomMessageRenderers();
+registerKgToolRenderers();
+registerWebToolRenderer();
 
 // Rename pi-web-ui's "session" vocabulary to the friendlier "chat" everywhere it
 // surfaces (the SessionListDialog title etc. render via mini-lit's i18n). We
@@ -123,6 +137,21 @@ const ANON_TOKEN_SLOT = "myriapod-anon";
 // The proxy origin (MYRIAPOD_PROXY_BASE minus the /v1 suffix) — where /anon-init,
 // /redeem, and /balance live.
 const MYRIAPOD_PROXY_ORIGIN = MYRIAPOD_PROXY_BASE.replace(/\/v1\/?$/, "");
+// The auth-gated web-search endpoint, alongside the proxy's other /v1 routes
+// (/v1/chat/completions etc.). Reached with the proxy principal bearer.
+const WEB_SEARCH_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/web-search`;
+
+// Voice-concurrency broker (OFF by default). When VITE_VOICE_BROKER is unset the
+// voice path is byte-for-byte the current single-instance demo: no lease calls, and
+// SttClient/KyutaiTtsSynthesizer are built with no URL override (they fall back to
+// VITE_STT_BASE / VITE_TTS_BASE). Enabled, the broker hands each voice-engaged
+// browser a leased {sttUrl, ttsUrl} pair and queues overflow. The /voice/* routes
+// live at the proxy ORIGIN (same as web-search), so the build-time CSP is untouched.
+const VOICE_BROKER_ENABLED =
+	import.meta.env.VITE_VOICE_BROKER === "1" || import.meta.env.VITE_VOICE_BROKER === "true";
+const VOICE_LEASE_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/voice/lease`;
+const VOICE_HEARTBEAT_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/voice/heartbeat`;
+const VOICE_RELEASE_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/voice/release`;
 
 // BotD bot-detection verdict, computed once on boot and sent to /anon-init as the
 // invisible bot gate. Fail-OPEN: stays {bot:false} if BotD is blocked or errors, so
@@ -364,14 +393,25 @@ let lastVacuum: { terms: TermMatch[]; triples: Triple[] } | null = null;
 // synth is created lazily on the first voice turn and reused; the STT client is
 // reused across turns (reconnected if the socket dropped).
 let synth: KyutaiTtsSynthesizer | null = null;
-let sttClient: SttClient | null = null;
+let sttClient: WhisperClient | null = null;
 let micOn = false;
-// TTS gate: set true right before a VOICE agent.prompt, consumed at the assistant
-// message_start. Typed turns leave it false, so they stream silently.
-let pendingVoiceResponse = false;
+// TTS gate: set true right before a VOICE agent.prompt and held for the WHOLE
+// voice turn — across any tool-call round-trip — so the FINAL assistant message
+// (the answer generated after a tool result) speaks, not just the first
+// (tool-call) message. Cleared at agent_end. Typed turns leave it false → silent.
+let voiceTurnSpeaking = false;
+// Guards re-opening a speaker within a single assistant message after its queue
+// has closed (message_end) or been cut (barge-in). Reset on each message_start.
+let voiceMsgDone = false;
 // Push/close async-iterable that feeds the synth the assistant's streamed text
 // deltas (the synth drains it through its own sentence chunker → TTS).
 let voiceQueue: AsyncStringQueue | null = null;
+// Voice-broker lease (only used when VOICE_BROKER_ENABLED). Held for the duration of
+// a browser's voice engagement — acquired on the first mic-on, kept alive by a
+// heartbeat across turns, released on unload. null = no slot held (the default-off
+// path leaves this null forever, so the voice clients build with no URL override).
+let voiceLease: { leaseId: string; sttUrl: string; ttsUrl: string } | null = null;
+let voiceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 // Persistent "speak-but-don't-listen" mute (double-click the stop-audio button),
 // remembered per browser. When set, the speaker is never opened on message_start.
 const TTS_MUTE_KEY = "myriapod:tts-muted";
@@ -432,11 +472,13 @@ async function getAudioWorkletNode(audioContext: AudioContext, name: string): Pr
 // concise. (2) it gives NO decline/refusal guidance — total topical freedom is the
 // intent, the model's own alignment is the only limiter; don't add a "decline
 // gracefully" line, it just teaches refusal. It stays evergreen (no model, version,
-// or hardware) and assumes no tools. Self-hosters should swap in a prompt that fits
-// their own agent. See the README. NOTE: this is the SHARED system prompt for both
+// or hardware). It names no specific tools — the agent's tools (memory search/dump,
+// web search) are self-describing via their own schemas, which the framework injects.
+// Self-hosters should swap in a prompt that fits their own agent. See the README. NOTE:
+// this is the SHARED system prompt for both
 // voice and typed chat (single agent), so its "talk out loud, no markdown" guidance
 // also reaches the typed path.
-// The prompt deliberately names the model stack (LLM / Kyutai moshi STT+TTS) so the
+// The prompt deliberately names the model stack (LLM / STT / Kyutai moshi TTS) so the
 // agent knows what it is rather than hallucinating (it assumed a French accent) —
 // update the stack lines here on any model or voice swap.
 const VOICE_SYSTEM_PROMPT = `You are Radim, the voice of Myriapod.
@@ -453,7 +495,7 @@ How you are:
 
 What you are (only worth mentioning if it comes up):
 - Your mind is GLM 5.2, a frontier language model.
-- You hear through Kyutai's moshi speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
+- You hear through speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
 - You're the voice of Myriapod. A small background agent quietly reads each exchange and distills it into a personal knowledge graph — people, things, and how they relate — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that graph, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
 
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
@@ -976,6 +1018,57 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		input: unknown,
 		...rest: unknown[]
 	) => {
+		// HISTORY BOUNDING (Pi message-level compaction). Runs before retrieval + the
+		// kg-context append. At ~1M context this rarely fires, but it keeps a very long
+		// conversation from overflowing: estimate context tokens, and once over the
+		// threshold, summarize the older messages and replace them with a single
+		// compaction-summary message (recent turns preserved). The high-level
+		// compact()/prepareCompaction() are SessionTree-oriented and don't fit this flat
+		// message array, so we drive the message-level primitives directly. Wrapped so any
+		// failure just lets the turn proceed uncompacted.
+		try {
+			const est = estimateContextTokens(agent.state.messages);
+			const cw = agent.state.model?.contextWindow ?? MYRIAPOD_MODEL.contextWindow;
+			if (shouldCompact(est.tokens, cw, DEFAULT_COMPACTION_SETTINGS)) {
+				// findCutPoint is entry-based (SessionTree) and unusable here, so walk from
+				// the end summing per-message token estimates until keepRecentTokens, then cut
+				// at a user-message boundary so a turn is never split.
+				const keepRecentTokens = DEFAULT_COMPACTION_SETTINGS.keepRecentTokens;
+				const msgs = agent.state.messages;
+				let acc = 0;
+				let cut = msgs.length;
+				for (let i = msgs.length - 1; i >= 0; i--) {
+					acc += estimateTokens(msgs[i]);
+					if (acc >= keepRecentTokens && msgs[i].role === "user") {
+						cut = i;
+						break;
+					}
+				}
+				if (cut > 0 && cut < msgs.length) {
+					const toSummarize = msgs.slice(0, cut);
+					const kept = msgs.slice(cut);
+					const summaryRes = await generateSummary(
+						toSummarize,
+						agent.state.model!,
+						DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+						servingPath.auth,
+					);
+					if (summaryRes.ok) {
+						agent.state.messages = [
+							createCompactionSummaryMessage(summaryRes.value, est.tokens, new Date().toISOString()),
+							...kept,
+						];
+						forceChatRepaint();
+						dbg(`compaction: summarized ${toSummarize.length} msgs, kept ${kept.length} (~${est.tokens} ctx tok)`);
+					} else {
+						dbgError("compaction generateSummary failed (turn proceeds uncompacted):", summaryRes.error);
+					}
+				}
+			}
+		} catch (err) {
+			dbgError("compaction check failed (turn proceeds):", err);
+		}
+
 		try {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
 			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
@@ -1047,22 +1140,28 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				updateCount++;
 			}
 
-			// VOICE TTS TAP. A voice-initiated turn (pendingVoiceResponse) opens a
-			// speaker on the assistant's message_start, streams its text deltas into a
-			// queue the synth drains, and closes the queue when the message ends. Typed
-			// turns leave pendingVoiceResponse false, so they stream silently. Keep this
-			// CHEAP — the core awaits each listener, so push-to-queue only, never block.
+			// VOICE TTS TAP. A voice-initiated turn (voiceTurnSpeaking, held across the
+			// whole turn incl. tool-call round-trips) lazily opens a TTS speaker on the
+			// FIRST text delta of each assistant message — never on message_start — so a
+			// tool-call message with no spoken text stays silent, while the final answer
+			// (a SEPARATE assistant message after the tool result) opens its own speaker
+			// and speaks. Each message's queue closes at message_end; the turn's speak
+			// intent retires at agent_end. toolResult messages never emit text_delta, so
+			// they never reach TTS. Typed turns leave voiceTurnSpeaking false → silent.
+			// Keep this CHEAP — the core awaits each listener, so push-to-queue only.
 			if (type === "message_start" && event.message?.role === "assistant") {
-				if (pendingVoiceResponse && !ttsMuted && synth) {
+				// New assistant message: let its text (if any) open a fresh speaker.
+				voiceMsgDone = false;
+			} else if (type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+				if (voiceTurnSpeaking && !ttsMuted && synth && !voiceQueue && !voiceMsgDone) {
 					voiceQueue = new AsyncStringQueue();
 					synth.speak(voiceQueue).catch((err) => dbgError("voice TTS speak failed (non-fatal):", err));
 				}
-				pendingVoiceResponse = false;
-			} else if (type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
 				voiceQueue?.push(event.assistantMessageEvent.delta);
 			} else if (type === "message_end") {
 				voiceQueue?.close();
 				voiceQueue = null;
+				voiceMsgDone = true;
 			}
 
 			// Light logging — skip the per-token message_update spam.
@@ -1102,6 +1201,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// finishRun() flips isStreaming=false AFTER agent_end with no event, so
 			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
+				voiceTurnSpeaking = false; // turn truly done (no more tool calls) → retire the speak intent
 				setTimeout(forceChatRepaint, 100);
 				// Typed chat: the agent turn just ended → collect the exchange and arm the
 				// debounce (text has no mic, so agent-done is the conversation pause).
@@ -1132,9 +1232,9 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			if (provider === MYRIAPOD_PROXY_PROVIDER) return true;
 			return await ApiKeyPromptDialog.prompt(provider);
 		},
-		// No tools for V1 — a plain conversational agent. (The KG-search tool is a
-		// planned later phase; the audience isn't doing HTML prototyping, so the
-		// artifacts tool is unwanted noise. We also strip it explicitly below.)
+		// Empty factory: ChatPanel still prepends its own `artifacts` tool, so we
+		// overwrite agent.state.tools outright below with our real tool set (KG search
+		// + dump, and web search on the owner-funded paths) — that also drops artifacts.
 		toolsFactory: () => [],
 	});
 
@@ -1146,11 +1246,24 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		chatPanel.agentInterface.enableThinkingSelector = false;
 	}
 
-	// Force zero tools. ChatPanel unconditionally prepends its own `artifacts` tool
-	// (`[artifactsPanel.tool, ...toolsFactory()]`), so even with an empty factory the
-	// agent ends up with one tool + the artifacts side panel. Clear the array outright:
-	// no tools, no artifacts panel for V1.
-	agent.state.tools = [];
+	// Install our native tools, OVERWRITING ChatPanel's auto-prepended `artifacts` tool
+	// (`[artifactsPanel.tool, ...toolsFactory()]`) — this also keeps the artifacts side
+	// panel out. One assignment covers newSession AND loadSession (the per-turn context
+	// snapshot + the prompt wrapper don't touch state.tools). The KG tools read the live
+	// personal graph via a getter (it's reassigned on import/delete). web_search is
+	// universal — table-stakes for every visitor — so it's registered on every path. The
+	// endpoint is open (per-IP rate-limited, not principal-gated): owner-funded paths send
+	// their proxy bearer; own-key sends NO bearer, so its OpenRouter key never touches the
+	// proxy.
+	const tools = [
+		createKgSearchTool(() => userGraph),
+		createKgDumpTool(() => userGraph),
+		createWebSearchTool({
+			endpoint: WEB_SEARCH_ENDPOINT,
+			getBearer: () => (servingPath.mode === "own" ? "" : servingPath.auth),
+		}),
+	];
+	agent.state.tools = tools;
 };
 
 const loadSession = async (sessionId: string): Promise<boolean> => {
@@ -1242,8 +1355,7 @@ const renderHeader = () => {
 			<div class="cw-header flex items-center justify-between border-b border-border shrink-0">
 				<div class="flex items-center gap-1 px-4 py-2">
 					<button
-						class="text-base font-semibold px-1 mr-1 hover:opacity-80 transition-opacity"
-						style="color: oklch(67% 0.25 25)"
+						class="text-primary text-base font-semibold px-1 mr-1 hover:opacity-80 transition-opacity"
 						@click=${() => setView("chat")}
 					>
 						Myriapod
@@ -1410,14 +1522,21 @@ async function initApp() {
 		const outputWorklet = await getAudioWorkletNode(ctx, "audio-output-processor");
 		outputWorklet.connect(ctx.destination);
 		await ctx.resume();
-		synth = new KyutaiTtsSynthesizer(outputWorklet);
+		// voiceLease is null on the default (broker-off) path → no config → the synth
+		// falls back to VITE_TTS_BASE, exactly as before.
+		synth = voiceLease
+			? new KyutaiTtsSynthesizer(outputWorklet, { baseUrl: voiceLease.ttsUrl })
+			: new KyutaiTtsSynthesizer(outputWorklet);
 		return synth;
 	};
 
 	// Lazily build + connect the shared STT client. connect() is a no-op when already
 	// connected and reconnects when the socket has dropped, so it's safe to call per turn.
-	const ensureStt = async (): Promise<SttClient> => {
-		if (!sttClient) sttClient = new SttClient();
+	const ensureStt = async (): Promise<WhisperClient> => {
+		// Whisper is a SHARED HTTP endpoint, not a per-instance leased socket — so the
+		// broker's per-instance sttUrl is ignored here. The client always falls back to
+		// VITE_STT_BASE (connect() is a no-op; HTTP is stateless).
+		if (!sttClient) sttClient = new WhisperClient();
 		await sttClient.connect();
 		return sttClient;
 	};
@@ -1429,9 +1548,120 @@ async function initApp() {
 		synth?.stop();
 		voiceQueue?.close();
 		voiceQueue = null;
+		voiceMsgDone = true; // don't let trailing text deltas of this message re-open a speaker after a cut
 	};
 
-	installVoiceCapture({
+	// --- Voice-broker lease lifecycle (all no-ops when VOICE_BROKER_ENABLED is off) ---
+
+	// A small transient toast for the "voice busy — type instead" notice (the only
+	// user-facing broker surface). Self-removing; no dependency on a toast framework.
+	const showVoiceToast = (text: string) => {
+		const el = document.createElement("div");
+		el.textContent = text;
+		el.setAttribute("role", "status");
+		el.style.cssText =
+			"position:fixed;left:50%;bottom:5rem;transform:translateX(-50%);z-index:9999;" +
+			"background:#111;color:#34d399;border:1px solid #34d399;border-radius:.5rem;" +
+			"padding:.5rem .9rem;font-size:.875rem;box-shadow:0 2px 12px rgba(0,0,0,.4);";
+		document.body.appendChild(el);
+		window.setTimeout(() => el.remove(), 4000);
+	};
+
+	const stopVoiceHeartbeat = () => {
+		if (voiceHeartbeatTimer !== null) {
+			clearInterval(voiceHeartbeatTimer);
+			voiceHeartbeatTimer = null;
+		}
+	};
+
+	// Drop the held lease. useBeacon → fire a navigator.sendBeacon (survives unload);
+	// otherwise a keepalive fetch. Safe to call with no lease held.
+	const releaseVoiceLease = (useBeacon: boolean) => {
+		stopVoiceHeartbeat();
+		const lease = voiceLease;
+		voiceLease = null;
+		if (!lease) return;
+		const body = JSON.stringify({ leaseId: lease.leaseId });
+		try {
+			if (useBeacon && navigator.sendBeacon) {
+				navigator.sendBeacon(VOICE_RELEASE_ENDPOINT, new Blob([body], { type: "text/plain" }));
+			} else {
+				void fetch(VOICE_RELEASE_ENDPOINT, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body,
+					keepalive: true,
+				}).catch(() => {});
+			}
+		} catch (err) {
+			dbgError("voice lease release failed:", err);
+		}
+	};
+
+	const startVoiceHeartbeat = (heartbeatSec: number) => {
+		stopVoiceHeartbeat();
+		const ms = Math.max(5, heartbeatSec) * 1000;
+		voiceHeartbeatTimer = setInterval(() => {
+			if (!voiceLease) return;
+			void fetch(VOICE_HEARTBEAT_ENDPOINT, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ leaseId: voiceLease.leaseId }),
+			})
+				.then((r) => {
+					// 404 → the server reclaimed this lease (TTL); drop it locally so the
+					// next mic-on re-leases cleanly.
+					if (r.status === 404) releaseVoiceLease(false);
+				})
+				.catch(() => {});
+		}, ms);
+	};
+
+	// Acquire (or reuse) a voice slot. Returns:
+	//   "skip"    — broker disabled OR the request failed → proceed with default
+	//               single-instance behavior (the demo still works if the broker is down).
+	//   "granted" — a slot is held (voiceLease set); voice clients will use its URLs.
+	//   "busy"    — every instance is full (202) → caller must abort the mic-on.
+	const acquireVoiceLease = async (): Promise<"skip" | "granted" | "busy"> => {
+		if (!VOICE_BROKER_ENABLED) return "skip";
+		if (voiceLease) return "granted"; // already hold this engagement's slot
+		let res: Response;
+		try {
+			res = await fetch(VOICE_LEASE_ENDPOINT, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: "{}",
+			});
+		} catch (err) {
+			dbgError("voice lease request failed:", err);
+			return "skip";
+		}
+		if (res.status === 202) return "busy";
+		if (!res.ok) {
+			dbgError("voice lease error status:", res.status);
+			return "skip";
+		}
+		let data: { leaseId?: string; sttUrl?: string; ttsUrl?: string; heartbeatSec?: number };
+		try {
+			data = await res.json();
+		} catch (err) {
+			dbgError("voice lease parse failed:", err);
+			return "skip";
+		}
+		if (!data.leaseId || !data.sttUrl || !data.ttsUrl) return "skip";
+		// A freshly-minted lease may point at a different instance than the previous
+		// one (e.g. after a TTL-drop). Tear down any cached voice clients so ensure*
+		// rebuilds them against the leased URLs.
+		synth?.dispose();
+		synth = null;
+		sttClient?.close();
+		sttClient = null;
+		voiceLease = { leaseId: data.leaseId, sttUrl: data.sttUrl, ttsUrl: data.ttsUrl };
+		startVoiceHeartbeat(data.heartbeatSec ?? 60);
+		return "granted";
+	};
+
+	const voiceController = installVoiceCapture({
 		onStart: async (stream) => {
 			micOn = true;
 			cutVoiceAudio(); // barge-in: toggling the mic on cuts any in-progress reply's audio
@@ -1443,8 +1673,23 @@ async function initApp() {
 			// Memory consent: a no-op on the anon path (the welcome modal settled it inline) —
 			// only fires the standalone consent modal for own-key/family users.
 			void ensureMemoryConsent();
+			// Voice-concurrency admission (no-op when the broker is disabled). On "busy"
+			// every moshi instance is full → refuse the mic-on and steer the user to typed
+			// chat (which shares the same agent and needs no voice slot).
+			const leaseStatus = await acquireVoiceLease();
+			if (leaseStatus === "busy") {
+				micOn = false;
+				voiceController.cancel(); // back to idle, release the mic stream, no onStop
+				showVoiceToast("Voice is busy right now — type your message instead.");
+				return;
+			}
+			// Recording-in-progress cue: show a user-side placeholder bubble (undulating
+			// ellipsis) right away, removed in onStop when the real transcript lands. A fresh
+			// array + repaint is mandatory — message-list is identity-only reactive.
+			agent.state.messages = [...agent.state.messages, createVoicePendingMessage()];
+			forceChatRepaint();
 			try {
-				await ensureSynth(); // open the speaker up front so message_start can use it
+				await ensureSynth(); // warm the synth up front so the TTS tap can lazily open a speaker mid-stream
 				await ensureStt();
 			} catch (err) {
 				dbgError("voice setup failed:", err);
@@ -1459,27 +1704,48 @@ async function initApp() {
 		// renders both — no manual message append.
 		onStop: async () => {
 			micOn = false;
-			const rec = recorder;
-			recorder = null;
-			if (!rec) return;
-			let pcm: Float32Array;
+			// Keep the recording-in-progress placeholder visible THROUGH the STT round-trip:
+			// batch transcription takes multiple seconds, and dropping the cue up front would
+			// leave dead air with no feedback during exactly that wait. The same ellipsis
+			// bubble carries continuous record→transcribe→answer feedback. It's removed
+			// exactly once — right before the real transcript bubble lands, and via the
+			// finally as a safety net on every early-return / error path, so it is NEVER
+			// orphaned. The guard makes the helper idempotent.
+			let placeholderShown = true;
+			const dropPlaceholder = () => {
+				if (!placeholderShown) return;
+				placeholderShown = false;
+				agent.state.messages = agent.state.messages.filter((m) => m.role !== "voice-pending");
+				forceChatRepaint();
+			};
 			try {
-				pcm = await rec.stop();
-			} catch (err) {
-				dbgError("voice recorder stop failed:", err);
-				return;
-			}
-			if (!pcm.length || !sttClient) return;
-			let transcript = "";
-			try {
-				transcript = await sttClient.transcribe(pcm);
-			} catch (err) {
-				dbgError("voice transcription failed:", err);
-				return;
-			}
-			if (transcript.trim()) {
-				pendingVoiceResponse = true; // gate: this turn's reply speaks (see message_start)
-				void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
+				const rec = recorder;
+				recorder = null;
+				if (!rec) return;
+				let pcm: Float32Array;
+				try {
+					pcm = await rec.stop();
+				} catch (err) {
+					dbgError("voice recorder stop failed:", err);
+					return;
+				}
+				if (!pcm.length || !sttClient) return;
+				let transcript = "";
+				try {
+					transcript = await sttClient.transcribe(pcm);
+				} catch (err) {
+					dbgError("voice transcription failed:", err);
+					return;
+				}
+				// Real transcript is in hand — drop the cue right before the user bubble lands
+				// (avoids a flash) and hand the transcript to the agent.
+				dropPlaceholder();
+				if (transcript.trim()) {
+					voiceTurnSpeaking = true; // gate: this turn's reply speaks, incl. the post-tool final answer (see TTS tap)
+					void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
+				}
+			} finally {
+				dropPlaceholder(); // safety net: every early-return / error path lands here
 			}
 		},
 	});
@@ -1499,6 +1765,7 @@ async function initApp() {
 	// (agent_end already queued completed exchanges; this just pushes the batch early.)
 	window.addEventListener("beforeunload", () => {
 		void flushIngestion();
+		releaseVoiceLease(true); // free the voice slot on tab close (sendBeacon; no-op if none held)
 		synth?.dispose();
 		sttClient?.close();
 	});
