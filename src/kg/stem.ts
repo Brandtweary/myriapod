@@ -24,7 +24,7 @@ export function stemWord(word: string): string {
 // depluralize — the ONE normalization applied unconditionally
 // in term/seed matching (independent of the per-node no_stem Porter opt-in, which
 // defaults to exact). Conservative: leaves non-plurals alone. Spoken S-plurals
-// ("knowledge graphs") still find the singular label ("knowledge-graph").
+// ("term stores") still find the singular label ("term-store").
 export function depluralize(word: string): string {
 	const w = word.toLowerCase();
 	if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;

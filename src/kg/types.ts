@@ -1,65 +1,38 @@
-// The shapes for the serialized graph asset and the retrieval outputs.
-
-export interface Clause {
-	type: "because" | "with";
-	text: string;
-}
-
-export interface LinkData {
-	from_id: string;
-	link_type: string;
-	to_id: string;
-	expired_at?: string | null;
-	clauses?: Clause[];
-}
+// The shapes for the serialized memory asset and the retrieval outputs.
 
 export interface Thought {
 	id: string;
 	label: string;
-	weight: number;
 	last_fired?: string;
 	description: string | null;
 	entity_type: string | null;
-	links_to: string[];
-	links_from: string[];
-	link_data: LinkData | null;
+	// Alternative surface forms that route to this term (spoken variants,
+	// abbreviations, persistent mistranscriptions). Matched exactly (lowercased).
+	aliases: string[];
+	// 384-dim MiniLM embedding of the description, computed server-side on
+	// write (mint / description change). Null until embedded; rides the
+	// lexicon export so imports don't recompute.
+	embedding?: number[] | null;
 	hit_count: number;
 	created_at?: string;
 	updated_at?: string;
 	metadata: { no_stem?: boolean } | null;
 }
 
-// The serialized personal-graph asset persisted to IndexedDB.
+// The serialized memory asset persisted to IndexedDB (the term half of the
+// exportable lexicon).
 export interface GraphAsset {
 	meta: {
 		version: number;
 		node_count: number;
-		edge_count: number;
 		last_modified: string;
 	};
 	thoughts: Record<string, Thought>;
 }
-
-// Retrieval provenance — which graph a gutter item came from. Drives the
-// green (user, the common case) vs violet/serif (stock, the marked exception)
-// styling split. Absent on raw retrieve() output; tagged at merge time.
-export type RetrievalSource = "user" | "stock";
 
 // term_match result (left gutter).
 export interface TermMatch {
 	label: string;
 	description: string;
 	hit_count: number;
-	source?: RetrievalSource;
-}
-
-// PPR result (right gutter).
-export interface Triple {
-	subject: string;
-	predicate: string;
-	object: string;
-	weight: number;
-	hops: number;
-	clauses?: Clause[];
-	source?: RetrievalSource;
 }

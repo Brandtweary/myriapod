@@ -18,13 +18,13 @@ export interface SystemNotificationMessage {
 	timestamp: string;
 }
 
-// Hidden KG-context breadcrumb. Carries the per-turn <kg-context> injection block.
+// Hidden memory breadcrumb. Carries the per-turn <memory> injection block.
 // Deliberately has NO registered renderer, so MessageList skips it (invisible in
 // the chat) — but it persists in agent.state.messages and accumulates across
 // turns, mirroring Claude Code's accumulating additionalContext. convertToLlm
 // converts it to a real user message so the model sees the retrieved context.
-export interface KgContextMessage {
-	role: "kg-context";
+export interface MemoryContextMessage {
+	role: "memory-context";
 	block: string;
 	timestamp: string;
 }
@@ -45,13 +45,13 @@ export interface VoicePendingMessage {
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		"system-notification": SystemNotificationMessage;
-		"kg-context": KgContextMessage;
+		"memory-context": MemoryContextMessage;
 		"voice-pending": VoicePendingMessage;
 	}
 }
 
-export function createKgContextMessage(block: string): KgContextMessage {
-	return { role: "kg-context", block, timestamp: new Date().toISOString() };
+export function createMemoryContextMessage(block: string): MemoryContextMessage {
+	return { role: "memory-context", block, timestamp: new Date().toISOString() };
 }
 
 export function createVoicePendingMessage(): VoicePendingMessage {
@@ -140,12 +140,12 @@ export function customConvertToLlm(messages: AgentMessage[]): Message[] {
 				timestamp: Date.now(),
 			};
 		}
-		if (m.role === "kg-context") {
-			// The block is already a self-delimiting <kg-context>…</kg-context>
-			// string; surface it as a user message so the model reads it as
-			// retrieved context (mirrors CC's additionalContext injection).
-			const kg = m as KgContextMessage;
-			return { role: "user", content: kg.block, timestamp: Date.now() };
+		if (m.role === "memory-context") {
+			// The block is already a self-delimiting <memory>…</memory> string;
+			// surface it as a user message so the model reads it as retrieved
+			// context (mirrors CC's additionalContext injection).
+			const mem = m as MemoryContextMessage;
+			return { role: "user", content: mem.block, timestamp: Date.now() };
 		}
 		if (m.role === "compactionSummary") {
 			// History bounding: the compaction summary REPLACES the cut history.

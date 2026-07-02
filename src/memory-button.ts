@@ -1,14 +1,12 @@
-// Memory-indicator button — the write-path's visible pulse.
+// Memory-indicator button — the pipeline's visible pulse.
 //
-// The gutters make RETRIEVAL visible; this makes INGESTION visible. It mounts in
-// the editor immediately left of the mic button (sibling cluster: [memory][mic]
-// [send]) and reflects the ingestion lifecycle:
+// The left gutter makes RETRIEVAL visible and the right gutter shows the
+// pipeline's actions; this button is the at-a-glance state. It mounts in the
+// editor immediately left of the mic button (sibling cluster: [memory][mic]
+// [send]) and reflects the whole memory pipeline:
 //   off     — memory consent not granted (dim/gray); click offers to turn it on
-//   saved   — memory on, everything ingested (dim green); click is a no-op
-//   pending — un-ingested content waiting (bright green); click saves it now
-//   armed   — conversation paused, debounce counting down (slow breathe)
-//   running — an extraction is in flight (warm-orange pulse)
-// Clicking force-flushes the pending batch (skips the debounce); a no-op when saved.
+//   saved   — memory on, pipeline idle (dim green)
+//   running — pipeline agents in flight this turn (warm-orange pulse)
 //
 // Re-homes itself after each editor re-render via a MutationObserver, mirroring the
 // mic button's mount pattern in voice.ts.
@@ -16,12 +14,12 @@
 import { html, render } from "lit";
 import { Brain, createElement } from "lucide";
 
-export type MemoryVisual = "off" | "saved" | "pending" | "armed" | "running";
+export type MemoryVisual = "off" | "saved" | "running";
 
 export interface MemoryButtonSeam {
 	// Current visual state, read on every (re-)render.
 	getVisual: () => MemoryVisual;
-	// Click handler — force-flush when on, or offer consent when off.
+	// Click handler — offers consent when off; a no-op when on.
 	onClick: () => void;
 }
 
@@ -34,11 +32,9 @@ const STYLES = `
 .cw-mem:focus-visible { outline: 2px solid #34d399; outline-offset: 1px; }
 .cw-mem--off { color: #6b7280; opacity: .65; }
 .cw-mem--saved { opacity: .45; }
-.cw-mem--armed svg { animation: cw-mem-breathe 2.4s ease-in-out infinite; }
-.cw-mem--running { color: #fb923c; } /* warm orange while extracting — distinct from the idle green */
+.cw-mem--running { color: #fb923c; } /* warm orange while the pipeline works — distinct from the idle green */
 .cw-mem--running svg { animation: cw-mem-pulse 1.1s infinite; }
 @keyframes cw-mem-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
-@keyframes cw-mem-breathe { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 `;
 
 function ensureStyles(): void {
@@ -51,10 +47,8 @@ function ensureStyles(): void {
 
 const LABELS: Record<MemoryVisual, string> = {
 	off: "Memory off — click to turn on",
-	saved: "Memory on — up to date",
-	pending: "Click to save to memory now",
-	armed: "Saving soon — click to save now",
-	running: "Saving to memory…",
+	saved: "Memory on",
+	running: "Memory working…",
 };
 
 export class MemoryButton {
@@ -80,7 +74,7 @@ export class MemoryButton {
 		mic.parentElement.insertBefore(this.host, mic);
 	}
 
-	// Re-render from the current visual state. Called by the host when ingestion or
+	// Re-render from the current visual state. Called by the host when pipeline or
 	// consent state changes.
 	refresh(): void {
 		this.renderButton();
@@ -89,16 +83,7 @@ export class MemoryButton {
 	private renderButton(): void {
 		const v = this.seam.getVisual();
 		const label = LABELS[v];
-		const cls =
-			v === "off"
-				? "cw-mem--off"
-				: v === "saved"
-					? "cw-mem--saved"
-					: v === "armed"
-						? "cw-mem--armed"
-						: v === "running"
-							? "cw-mem--running"
-							: ""; // pending = base (bright green)
+		const cls = v === "off" ? "cw-mem--off" : v === "running" ? "cw-mem--running" : "cw-mem--saved";
 		const svg = createElement(Brain);
 		svg.setAttribute("width", "18");
 		svg.setAttribute("height", "18");

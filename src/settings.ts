@@ -8,9 +8,9 @@ export interface MemoryTabCallbacks {
 	setEnabled: (on: boolean) => Promise<void>;
 }
 
-// The Memory tab: turn personal-graph memory on or off after the initial consent
-// prompt. Off means nothing new is ingested; the existing graph is untouched (back
-// it up from Export). This is the "change your mind later" half of the consent gate.
+// The Memory tab: turn memory on or off after the initial consent prompt. Off
+// means the pipeline never fires; the existing memory is untouched (back it up
+// from Export). This is the "change your mind later" half of the consent gate.
 export class MemoryTab extends SettingsTab {
 	@state() private enabled = false;
 
@@ -32,7 +32,7 @@ export class MemoryTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-4 p-1">
 				<p class="text-sm text-muted-foreground">
-					Myriapod remembers your conversations as a personal knowledge graph, kept only in this browser.
+					Myriapod remembers your conversations as a personal memory, kept only in this browser.
 				</p>
 				<div class="flex items-center gap-3">
 					<button
@@ -60,10 +60,11 @@ export interface ExportTabCallbacks {
 	onDelete: () => Promise<void>;
 }
 
-// Export / import of the personal knowledge graph. Browser storage can be
-// evicted, so a file export is the real durability story (the framework's
+// Export / import of the lexicon — the whole memory artifact: the term glossary
+// plus the speech-adaptation data and conversation summaries. Browser storage
+// can be evicted, so a file export is the real durability story (the framework's
 // PersistentStorageDialog is broken upstream). main.ts supplies the callbacks
-// since the live graph lives there.
+// since the live stores live there.
 export class ExportTab extends SettingsTab {
 	constructor(private readonly cbs: ExportTabCallbacks) {
 		super();
@@ -86,14 +87,15 @@ export class ExportTab extends SettingsTab {
 			}
 		};
 		const onDelete = async () => {
-			if (!confirm("Delete your knowledge graph? This can't be undone.")) return;
+			if (!confirm("Delete your memory? This can't be undone.")) return;
 			await this.cbs.onDelete();
-			alert("Your knowledge graph has been deleted.");
+			alert("Your memory has been deleted.");
 		};
 		return html`
 			<div class="flex flex-col gap-4 p-1">
 				<p class="text-sm text-muted-foreground">
-					Save your memory to a file you can re-import later or move to another browser.
+					Save your lexicon — everything Myriapod remembers — to a file you can re-import
+					later or move to another browser.
 				</p>
 				<div class="flex flex-wrap gap-3">
 					<button

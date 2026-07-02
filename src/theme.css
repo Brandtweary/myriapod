@@ -99,12 +99,12 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 }
 
 /* ============================================================================
-   Retrieval gutters — term matches (left) + triples (right) flanking the chat.
-   The demo's whole point: make per-turn KG retrieval visible. Content is
-   bottom-aligned near the input band (via .cw-gutter-inner margin-top:auto, which
-   collapses to 0 and scrolls cleanly when a turn is retrieval-heavy). Hidden
-   below lg (mobile shows chat only — gutter display deferred for small screens).
-   Display (flex) comes from the lg:flex utility class on the element. */
+   The gutters — term matches (left) + the pipeline activity feed (right)
+   flanking the chat. The demo's whole point: make the memory visible — what it
+   retrieves, and the agents tending it. Content is bottom-aligned near the
+   input band (via .cw-gutter-inner margin-top:auto, which collapses to 0 and
+   scrolls cleanly when a turn is heavy). Hidden below lg (mobile shows chat
+   only — gutter display deferred for small screens). */
 /* Body layout in PLAIN CSS (not Tailwind utilities) so the load-bearing
    height/scroll chain never depends on Tailwind's content-scan picking up class
    strings applied to DOM in a .ts file. #app (h-screen flex-col) → .cw-body
@@ -192,57 +192,22 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	overflow: hidden;
 }
 
-/* Triples render as inline cards — subject predicate object on a flowing line,
-   each card visually separated (green left-rule + lifted surface) so adjacent
-   triples don't bleed together. */
-.cw-triple {
+/* Pipeline activity feed (right gutter): one compact card per recorded agent
+   action — agent name in green, the action line in muted text. Newest on top. */
+.cw-activity {
 	padding: 0.4rem 0.55rem;
 	background: var(--accent);
 	border-left: 2px solid var(--primary);
 	border-radius: 4px;
 	word-break: break-word;
 }
-.cw-tri-s,
-.cw-tri-o {
-	color: var(--foreground);
-}
-.cw-tri-p {
+.cw-activity-agent {
 	color: var(--primary);
-	white-space: nowrap;
+	font-weight: 600;
+	margin-right: 0.4rem;
 }
-.cw-clause {
-	display: block;
-	margin-top: 0.2rem;
+.cw-activity-line {
 	color: var(--muted-foreground);
-	font-style: italic;
-}
-
-/* Provenance split. Personal-graph items keep the green default (the common
-   case). STOCK-graph items are the rare, marked exception: a bright readable
-   violet + serif, grouped below the user's own nodes under a subheading. Violet
-   is a hue nature almost never makes, so it reads as "from the docs,
-   not from you." Most users never ask about the KG, so it rarely shows at all. */
-.cw-gutter-sub {
-	margin-top: 0.45rem;
-	color: oklch(74% 0.18 300);
-	font-family: Georgia, "Times New Roman", serif;
-	font-style: italic;
-	font-size: 0.62rem;
-	letter-spacing: 0.04em;
-	opacity: 0.85;
-}
-.cw-term--stock,
-.cw-triple--stock {
-	font-family: Georgia, "Times New Roman", serif;
-}
-.cw-term--stock .cw-term-label {
-	color: oklch(74% 0.18 300);
-}
-.cw-triple--stock {
-	border-left-color: oklch(74% 0.18 300);
-}
-.cw-triple--stock .cw-tri-p {
-	color: oklch(74% 0.18 300);
 }
 
 /* Recording-in-progress cue: an undulating three-dot typing indicator inside a

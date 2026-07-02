@@ -1,10 +1,9 @@
 # Myriapod
 
-A browser-local **voice agent** with a self-maintaining knowledge-graph memory that lives in your own
-browser.
+A browser-local **voice agent** with a self-maintaining memory that lives in your own browser.
 
-A thing you can actually talk to. Speak or type, and a personal knowledge graph grows in-page from the
-conversation, giving the agent memory that persists across turns and across visits.
+A thing you can actually talk to. Speak or type, and a personal memory grows in-page from the
+conversation, giving the agent recall that persists across turns and across visits.
 
 It's a curated stack of **open-weight models** — open speech-to-text, a frontier open-weight LLM, and
 open text-to-speech — wired into one voice loop, with a memory layer you own and can see. Every model in
@@ -15,35 +14,41 @@ standing up a GPU.
 
 - **A voice agent** — talk to it. Speech-to-text, a frontier LLM, and text-to-speech form the loop; you
   tap to talk and tap again to end your turn (turn-based, not always-listening). You can also just type.
-- **A persistent-memory assistant** — as you talk, it builds a small knowledge graph from what you tell
-  it, stored only in your browser (IndexedDB), never uploaded, exportable/importable for durability.
-  Memory is **opt-in** — a single toggle on first launch, on by default, flippable anytime in Settings.
+- **A persistent-memory assistant** — after each turn, a small crew of background agents reads the
+  exchange and tends a personal memory: a glossary of the people, things, and ideas in your world, each
+  with an evergreen description. It's stored only in your browser (IndexedDB), never uploaded, and is
+  exportable/importable for durability. Memory is **opt-in** — a single toggle on first launch, on by
+  default, flippable anytime in Settings.
 
-The memory layer is made **visible**: each turn, gutters beside the chat show the nodes matched and the
-relationships retrieved for your message — the retrieval is on screen, not hidden behind the generation.
+The memory layer is made **visible**: beside the chat, one gutter shows the terms matched for your
+message and the other shows the background agents at work — the memory tending itself, on screen rather
+than hidden behind the generation.
 
 ## How it works
 
 The **browser orchestrates** the whole loop — there is no conversation backend. Retrieval, the personal
-graph, and per-turn ingestion all run in-page over IndexedDB, no server round-trip for memory. Per turn,
-retrieval runs against your personal graph and the matched context is injected into the prompt.
+memory, and the every-turn memory pipeline all run in-page over IndexedDB, no server round-trip for
+memory. Per turn, a keyword router matches your message against your memory and injects the matched
+descriptions into the prompt; then, after the turn, the background pipeline updates the memory.
 
-The browser drives three endpoints directly:
+The browser drives these endpoints directly:
 
-- **Speech-to-text** — a WebSocket to an open [Kyutai](https://github.com/kyutai-labs) moshi STT model.
+- **Speech-to-text** — an open [Whisper](https://github.com/SYSTRAN/faster-whisper) model over HTTP.
   Your whole utterance is sent as one batch and comes back as a transcript.
 - **The LLM** — an OpenAI-compatible chat endpoint streaming the reply. The demo serves
   [`z-ai/glm-5.2`](https://openrouter.ai/z-ai/glm-5.2) (open weights, 1M context) over OpenRouter; the
   model is swappable.
-- **Text-to-speech** — a WebSocket to an open Kyutai moshi TTS model. The reply is chunked into
-  sentences as it streams and spoken back, so audio starts before the model has finished writing.
+- **Text-to-speech** — a WebSocket to an open [Kyutai](https://github.com/kyutai-labs) moshi TTS model.
+  The reply is chunked into sentences as it streams and spoken back, so audio starts before the model
+  has finished writing.
 
 ## Run it yourself
 
 This repo is the frontend. The model endpoints are all open and self-hostable:
 
-- **STT + TTS** — open [Kyutai](https://github.com/kyutai-labs) moshi models, served over WebSockets.
-  Point the frontend at them with `VITE_STT_BASE` and `VITE_TTS_BASE`.
+- **STT** — an open [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server over HTTP; point
+  the frontend at it with `VITE_STT_BASE`. **TTS** — an open [Kyutai](https://github.com/kyutai-labs)
+  moshi model over a WebSocket; `VITE_TTS_BASE`.
 - **The LLM** — any OpenAI-compatible chat endpoint hosting an open-weight model. The hosted demo routes
   it through a small **metering proxy** (the one server-side piece, not in this repo) that holds the
   upstream key and hands out $10 of free credits per browser so you can try it without signing up; point

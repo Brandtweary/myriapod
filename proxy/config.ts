@@ -69,6 +69,9 @@ export const config = {
 	// Self-hosted SearXNG backing the auth-gated /v1/web-search route. Defaults to
 	// the local NixOS instance (serves JSON); prod overrides to the GPU-host instance.
 	searxngBase: process.env.SEARXNG_BASE ?? "http://127.0.0.1:8888",
+	// The embedding-inference container backing /v1/embed (memory dedup). Defaults
+	// to a local text-embeddings-inference instance; prod overrides to the GPU host.
+	embedBase: process.env.EMBED_BASE ?? "http://127.0.0.1:8899",
 	allowedOrigins: (process.env.ALLOWED_ORIGIN ?? "http://localhost:5173")
 		.split(",")
 		.map((s) => s.trim())

@@ -148,6 +148,60 @@ app.get("/v1/web-search", async (c) => {
 	return c.json({ results });
 });
 
+// In-memory per-IP sliding-window rate limit for the open embed passthrough.
+// Same rationale as web-search: the memory pipeline calls it once per term write,
+// so it's not principal-gated (CORS scopes browser callers); the window stops
+// non-browser abuse. Not money, not metered; a restart resets the counts.
+const EMBED_WINDOW_MS = 60_000;
+const EMBED_MAX = 240; // higher than web-search: a busy turn embeds several terms
+const embedHits = new Map<string, number[]>();
+function embedRateLimited(ip: string): boolean {
+	const now = Date.now();
+	const cutoff = now - EMBED_WINDOW_MS;
+	const hits = (embedHits.get(ip) ?? []).filter((t) => t > cutoff);
+	hits.push(now);
+	embedHits.set(ip, hits);
+	return hits.length > EMBED_MAX;
+}
+
+// Open (rate-limited) embedding passthrough. Proxies text to the self-hosted
+// embedding-inference container and returns the vectors — the browser can't reach
+// the GPU-host localhost directly, and CORS forbids a cross-origin call. Mirrors
+// the HF text-embeddings-inference `/embed` contract: {inputs: string[]} in, a
+// number[][] out. NOT metered (self-hosted/free). Used by the memory pipeline's
+// mint-time dedup (one call per term write).
+app.post("/v1/embed", async (c) => {
+	if (embedRateLimited(clientIp(c))) {
+		return c.json({ error: "rate limit — slow down" }, 429);
+	}
+	let body: { inputs?: unknown };
+	try {
+		body = (await c.req.json()) as { inputs?: unknown };
+	} catch {
+		return c.json({ error: "invalid JSON body" }, 400);
+	}
+	const inputs = Array.isArray(body.inputs) ? body.inputs.filter((s) => typeof s === "string") : [];
+	if (!inputs.length) return c.json({ error: "missing inputs (string[])" }, 400);
+
+	let res: Response;
+	try {
+		res = await fetch(`${config.embedBase}/embed`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ inputs }),
+			signal: AbortSignal.timeout(15000),
+		});
+	} catch (err) {
+		console.error("[proxy] embed fetch failed:", err);
+		return c.json({ error: "embed backend unreachable" }, 502);
+	}
+	if (!res.ok) {
+		return c.json({ error: `embed backend ${res.status}` }, 502);
+	}
+	// text-embeddings-inference returns number[][] directly; pass it through.
+	return c.json((await res.json()) as number[][]);
+});
+
 // Establish (or recover) an anonymous free-tier principal and return its token.
 // The frontend calls this once, on the first owner-funded send, then uses the
 // returned token as the proxy bearer for chat. This is the ONLY place a fresh $10

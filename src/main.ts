@@ -43,18 +43,20 @@ import { showGrantModal } from "./grant-modal.js";
 import { load as loadBotd } from "@fingerprintjs/botd";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
 import {
-	createKgContextMessage,
+	createMemoryContextMessage,
 	createVoicePendingMessage,
 	customConvertToLlm,
 	registerCustomMessageRenderers,
 } from "./custom-messages.js";
-import { createKgDumpTool, createKgSearchTool, registerKgToolRenderers } from "./kg-tools.js";
+import { createMemoryDumpTool, createMemorySearchTool, registerMemoryToolRenderers } from "./kg-tools.js";
 import { createWebSearchTool, registerWebToolRenderer } from "./web-tools.js";
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
 import { retrieve } from "./kg/retrieve.js";
-import { makeCompletion, runIngestion } from "./kg/ingest.js";
-import type { GraphAsset, TermMatch, Triple } from "./kg/types.js";
+import { makeEmbedClient } from "./kg/embed.js";
+import type { GraphAsset, TermMatch } from "./kg/types.js";
+import { PIPELINE_STORE, PipelineRuntime, type RunningContextEntry } from "./pipeline.js";
+import { applyAutoReplace, emptySttLexicon, type SttLexicon } from "./stt-lexicon.js";
 import { installVoiceCapture } from "./voice.js";
 import { PcmRecorder, WhisperClient } from "./stt.js";
 import { KyutaiTtsSynthesizer, TTS_SAMPLE_RATE } from "./tts.js";
@@ -64,7 +66,7 @@ import { installStopAudioButton } from "./stop-audio-button.js";
 
 // Register custom message + tool renderers
 registerCustomMessageRenderers();
-registerKgToolRenderers();
+registerMemoryToolRenderers();
 registerWebToolRenderer();
 
 // Rename pi-web-ui's "session" vocabulary to the friendlier "chat" everywhere it
@@ -82,10 +84,12 @@ setTranslations({
 	} as typeof baseTranslations.en,
 });
 
-// Personal knowledge graph persistence (Slice 4): one serialized GraphAsset blob
-// in its own IndexedDB store — the user's memory across all conversations.
-const PERSONAL_GRAPH_STORE = "personal-graph";
-const PERSONAL_GRAPH_KEY = "graph";
+// Lexicon persistence: one serialized term-store blob in its own IndexedDB
+// store — the user's memory across all conversations. (The pipeline's own state
+// — action buffers, running context, speech-adaptation data, review flags —
+// lives in the PIPELINE_STORE, keyed slots.)
+const LEXICON_STORE = "lexicon";
+const LEXICON_TERMS_KEY = "terms";
 
 // Memory-consent persistence: the visitor's opt-in choice, remembered per browser
 // so the consent modal asks only once.
@@ -105,14 +109,16 @@ const configs = [
 	providerKeys.getConfig(),
 	customProviders.getConfig(),
 	sessions.getConfig(),
-	{ name: PERSONAL_GRAPH_STORE }, // personal knowledge graph (serialized asset)
+	{ name: LEXICON_STORE }, // the term memory (serialized asset)
+	{ name: PIPELINE_STORE }, // pipeline state: buffers, running context, STT data, flags
 	{ name: CONSENT_STORE }, // memory-consent choice
 ];
 
 // Create backend
 const backend = new IndexedDBStorageBackend({
 	dbName: "pi-web-ui-example",
-	version: 4, // v4: added the memory-consent store
+	version: 5, // v5: term-based memory (lexicon + pipeline stores; the old
+	// personal-graph store is abandoned — pre-launch clean wipe, no migration)
 	stores: configs,
 });
 
@@ -140,6 +146,10 @@ const MYRIAPOD_PROXY_ORIGIN = MYRIAPOD_PROXY_BASE.replace(/\/v1\/?$/, "");
 // The auth-gated web-search endpoint, alongside the proxy's other /v1 routes
 // (/v1/chat/completions etc.). Reached with the proxy principal bearer.
 const WEB_SEARCH_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/web-search`;
+// The embedding passthrough (proxy → the embedding-inference container). Same
+// access model as web-search: open, per-IP rate-limited, not metered; own-key
+// visitors send no bearer.
+const EMBED_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/embed`;
 
 // Voice-concurrency broker (OFF by default). When VITE_VOICE_BROKER is unset the
 // voice path is byte-for-byte the current single-instance demo: no lease calls, and
@@ -342,9 +352,9 @@ const openSettings = async () => {
 			getBalance: fetchHostedBalance,
 		}),
 		new ExportTab({
-			onExport: downloadPersonalGraph,
-			onImport: importPersonalGraphFromFile,
-			onDelete: deletePersonalGraph,
+			onExport: downloadLexicon,
+			onImport: importLexiconFromFile,
+			onDelete: deleteLexicon,
 		}),
 	]);
 };
@@ -366,24 +376,22 @@ let agentUnsubscribe: (() => void) | undefined;
 let lastUpdateAt = 0;
 let updateCount = 0;
 
-// --- Browser-local knowledge graph (no server; retrieval runs in-page) ---
+// --- Browser-local term memory (no server; retrieval runs in-page) ---
 // Per-conversation injected-ledger (cross-turn dedup). Reset on each createAgent.
 // NOTE: a RESTORED session starts with an empty ledger even though its saved
-// kg-context breadcrumbs are in the transcript — so the first turns after a
+// memory breadcrumbs are in the transcript — so the first turns after a
 // reload may re-inject already-present context (minor token waste, self-corrects
 // as the conversation continues). Acceptable for V1.
 let ledger = new InjectedLedger();
-// Personal/user knowledge graph — mutable, in-page, PPR-only. Grows via per-turn
-// ingestion (agent_end trigger), retrieved alongside the stock graph. Slice 4
-// loads/persists it from IndexedDB; until then it lives for the session.
+// The user's term memory — mutable, in-page. Written by the pipeline agents
+// after every turn, retrieved by the keyword router before every send.
 let userGraph = Graph.empty();
-// User text of the in-flight turn, stashed by the prompt wrapper for the
-// agent_end ingestion trigger.
-let pendingTurnUserText = "";
+// The per-turn memory pipeline (constructed in initApp once the backend exists).
+let pipeline: PipelineRuntime;
 let bodyHost: HTMLDivElement; // flex-row wrapper: [leftGutter, chatPanel, rightGutter]
 let leftGutter: HTMLDivElement; // term matches
-let rightGutter: HTMLDivElement; // triples
-let lastVacuum: { terms: TermMatch[]; triples: Triple[] } | null = null;
+let rightGutter: HTMLDivElement; // pipeline activity feed
+let lastVacuum: { terms: TermMatch[] } | null = null;
 
 // --- Voice path (batch STT → agent → streaming TTS) ------------------------
 // The voice path now runs THROUGH the same agent as typed chat: batch STT turns
@@ -400,9 +408,10 @@ let micOn = false;
 // (the answer generated after a tool result) speaks, not just the first
 // (tool-call) message. Cleared at agent_end. Typed turns leave it false → silent.
 let voiceTurnSpeaking = false;
-// Guards re-opening a speaker within a single assistant message after its queue
-// has closed (message_end) or been cut (barge-in). Reset on each message_start.
-let voiceMsgDone = false;
+// Barge-in guard: set when the turn's TTS is cut (mic toggle / stop button /
+// Ctrl+Alt+Space) so trailing text deltas don't reopen a speaker for the rest of
+// the turn. Reset at turn start (voiceTurnSpeaking = true) and at agent_end.
+let voiceTurnCut = false;
 // Push/close async-iterable that feeds the synth the assistant's streamed text
 // deltas (the synth drains it through its own sentence chunker → TTS).
 let voiceQueue: AsyncStringQueue | null = null;
@@ -496,7 +505,7 @@ How you are:
 What you are (only worth mentioning if it comes up):
 - Your mind is GLM 5.2, a frontier language model.
 - You hear through speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
-- You're the voice of Myriapod. A small background agent quietly reads each exchange and distills it into a personal knowledge graph — people, things, and how they relate — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that graph, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
+- You're the voice of Myriapod. After every exchange, a small crew of background agents quietly reads the conversation and tends a personal memory — a glossary of the people, things, and ideas in the listener's life, each with an evergreen description — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that memory, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
 
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
@@ -612,13 +621,10 @@ const updateUrl = (sessionId: string) => {
 
 
 // --- Memory consent --------------------------------------------------------
-// Personal-graph writes are opt-in: NOTHING is ingested until the visitor agrees.
+// Memory writes are opt-in: the pipeline never fires until the visitor agrees.
 // "undecided" = the consent modal hasn't been answered yet in this browser.
 let memoryConsent: ConsentChoice | "undecided" = "undecided";
-// Ingestion activity for the memory button: idle | armed (debounce counting down) |
-// running (extraction in flight). The button reads consent + activity together.
-let ingestActivity: "idle" | "armed" | "running" = "idle";
-// Assigned in initApp once the memory button exists, so the scheduler can repaint it.
+// Assigned in initApp once the memory button exists, so the pipeline can repaint it.
 let refreshMemoryUi: () => void = () => {};
 let consentPrompted = false; // guards against opening a second modal while one is up
 
@@ -651,66 +657,12 @@ async function ensureMemoryConsent(): Promise<void> {
 	await setMemoryConsent(choice);
 }
 
-// --- Ingestion: collect → arm-on-pause → debounce → batch ------------------
-// Model (think conversation, NOT turns): NOTHING ingests while recording is live —
-// exchanges just accumulate into a batch. Ingestion only arms once the conversation
-// pauses: voice = mic toggled off AND the agent finished its last response; text =
-// the agent turn ended. Then a 15s debounce, then ONE extraction of the whole batch.
-// Resuming recording cancels a pending debounce. The memory button force-flushes now.
-// Two extractions never run at once: a flush that lands mid-run is honored after.
-const INGEST_DEBOUNCE_MS = 15_000;
-const MIN_RUNNING_MS = 2200; // hold the "running" pulse ~2 full cycles so it's clearly visible
-let ingestPending: string[] = []; // formatted exchanges since the last extraction
-let ingestTimer: ReturnType<typeof setTimeout> | undefined;
-let ingestRunning = false;
-let ingestRequeue = false; // a flush was requested while one was already running
-
-// Format one exchange the way the extractor expects.
-function buildTurnText(userText: string, assistantText: string): string {
-	return `[USER]:\n${userText}\n\n[ASSISTANT]:\n${assistantText}`;
-}
-
-// Collect a completed exchange into the batch (no timer). Consent-gated — nothing is
-// queued until the visitor opts in. While recording is live the batch just
-// accumulates; ingestion never fires mid-conversation (arming is separate, below).
-function queueIngest(userText: string, assistantText: string): void {
-	if (memoryConsent !== "granted") return; // consent gate — no writes until opted in
-	if (!userText.trim()) return;
-	ingestPending.push(buildTurnText(userText, assistantText));
-	refreshMemoryUi(); // saved → pending: there's now un-ingested content to save
-}
-
-// Arm the 15s debounce — call ONLY once the conversation has actually paused (voice:
-// mic toggled off AND the agent finished responding; text: the agent turn ended).
-// No-op if nothing is queued or consent isn't granted.
-function armIngestDebounce(): void {
-	if (memoryConsent !== "granted" || !ingestPending.length) return;
-	if (ingestTimer) clearTimeout(ingestTimer);
-	ingestTimer = setTimeout(() => void flushIngestion(), INGEST_DEBOUNCE_MS);
-	ingestActivity = "armed";
-	refreshMemoryUi();
-	dbg(`memory: ARMED — ${ingestPending.length} exchange(s) queued, ${INGEST_DEBOUNCE_MS}ms debounce`);
-}
-
-// Cancel a pending debounce — call when recording resumes (no ingestion while the
-// conversation is live). Keeps the collected batch; just stops the countdown.
-function cancelIngestDebounce(): void {
-	if (ingestTimer) {
-		clearTimeout(ingestTimer);
-		ingestTimer = undefined;
-		dbg("memory: debounce CANCELED (recording resumed)");
-	}
-	if (!ingestRunning) {
-		ingestActivity = "idle";
-		refreshMemoryUi();
-	}
-}
-
-// Fold an ingestion call's tokens + cost into the SESSION total. The framework's
-// stats line sums msg.usage over assistant messages, so attributing ingestion to the
-// latest assistant message makes the displayed total the true session cost (chat +
-// every ingestion the chat triggered) — no override of framework UI. (The proxy meters
-// the real cost separately; this is purely the on-screen readout.)
+// Fold a background pipeline call's tokens + cost into the SESSION total. The
+// framework's stats line sums msg.usage over assistant messages, so attributing
+// pipeline spend to the latest assistant message makes the displayed total the true
+// session cost (chat + every background call the chat triggered) — no override of
+// framework UI. (The proxy meters the real cost separately; this is purely the
+// on-screen readout.)
 function addIngestionCostToSession(promptTokens: number, completionTokens: number): void {
 	const c = MYRIAPOD_MODEL.cost;
 	const inCost = (promptTokens / 1_000_000) * c.input;
@@ -735,139 +687,86 @@ function addIngestionCostToSession(promptTokens: number, completionTokens: numbe
 		}
 	}
 	chatPanel.agentInterface?.requestUpdate?.();
-	dbg(`ingestion cost folded into session: +${promptTokens}in/${completionTokens}out tok, +$${(inCost + outCost).toFixed(6)}`);
+	dbg(`pipeline cost folded into session: +${promptTokens}in/${completionTokens}out tok, +$${(inCost + outCost).toFixed(6)}`);
 }
 
-// Run ingestion now over everything queued — the debounce fire and the memory
-// button both call this. Batches all pending exchanges into a single extraction and
-// serializes concurrent flushes. Turns that merely accumulate during a run wait for
-// their own debounce; only an explicit flush mid-run re-fires when this one ends.
-async function flushIngestion(): Promise<void> {
-	if (ingestTimer) {
-		clearTimeout(ingestTimer);
-		ingestTimer = undefined;
-	}
-	if (!ingestPending.length) return;
-	if (ingestRunning) {
-		ingestRequeue = true; // never two at once — honor after the current run
-		return;
-	}
-	const batch = ingestPending;
-	ingestPending = [];
-	ingestRunning = true;
-	ingestActivity = "running";
-	refreshMemoryUi();
-	const runStart = performance.now();
-	dbg(`memory: RUNNING — extracting batch of ${batch.length}`);
-	try {
-		let llmUsage = "";
-		// Ingestion rides the SAME serving path as chat: own-key → OpenRouter direct;
-		// owner-funded → the proxy (which meters it against the same principal, so
-		// ingestion debits the visitor's credit too). Same GLM model as chat for V1; a
-		// cheaper extraction model is a documented later refinement (see myriapod-model.ts).
-		const completion = makeCompletion({
-			baseUrl: servingPath.baseUrl,
-			model: MYRIAPOD_MODEL_ID,
-			apiKey: servingPath.auth,
-			onUsage: ({ promptTokens, completionTokens }) => {
-				llmUsage = `${promptTokens}p/${completionTokens}c tok`;
-				addIngestionCostToSession(promptTokens, completionTokens);
-			},
-		});
-		const llmStart = performance.now();
-		const stats = await runIngestion(userGraph, batch.join("\n\n"), completion);
-		dbg(
-			`ingestion LLM: ${Math.round(performance.now() - llmStart)}ms, ` +
-				`${llmUsage || "NO usage reported (call skipped/thin or failed)"}`,
-		);
-		if (stats) {
-			dbg(
-				`ingestion (batch of ${batch.length}): +${stats.newEntities} new nodes, ` +
-					`+${stats.linksAdded} links, ${stats.clausesMerged} clauses merged, ` +
-					`${stats.rejectedOrphan} orphans rejected, ${stats.expirationsApplied} expired ` +
-					`(personal graph now ${userGraph.thoughts.size} thoughts)`,
-			);
-			if (stats.entitiesAdded || stats.linksAdded || stats.clausesMerged || stats.expirationsApplied) {
-				await saveUserGraph();
-			}
-		} else {
-			dbg(`ingestion (batch of ${batch.length}): skipped (thin) or no parseable output`);
-		}
-	} catch (err) {
-		dbgError("ingestion failed (non-fatal):", err);
-	} finally {
-		// Hold the "running" pulse on screen at least MIN_RUNNING_MS even when the
-		// extraction is sub-second, so the state is actually perceptible.
-		const elapsed = performance.now() - runStart;
-		if (elapsed < MIN_RUNNING_MS) {
-			await new Promise((r) => setTimeout(r, MIN_RUNNING_MS - elapsed));
-		}
-		ingestRunning = false;
-		ingestActivity = "idle"; // arming is explicit (on conversation pause), not automatic
-		refreshMemoryUi();
-		dbg(`memory: IDLE — ingest cycle done in ${Math.round(performance.now() - runStart)}ms`);
-		if (ingestRequeue) {
-			ingestRequeue = false;
-			void flushIngestion(); // a debounce/button flush landed mid-run; honor it
-		}
-	}
-}
+// -- Lexicon persistence + export/import -------------------------------------
 
-// -- Personal-graph persistence + export/import (Slice 4) -------------------
-
-// One global graph per browser. Loaded at boot, saved after each ingestion.
+// One term memory per browser. Loaded at boot, saved after each pipeline tick.
 async function loadUserGraph(): Promise<void> {
 	try {
-		const asset = await backend.get<GraphAsset>(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY);
+		const asset = await backend.get<GraphAsset>(LEXICON_STORE, LEXICON_TERMS_KEY);
 		if (asset) {
 			userGraph = new Graph(asset);
-			dbg(`personal graph loaded: ${asset.meta.node_count} nodes, ${asset.meta.edge_count} edges`);
+			dbg(`term memory loaded: ${asset.meta.node_count} terms`);
 		}
 	} catch (err) {
-		dbgError("personal graph load failed (starting empty):", err);
+		dbgError("term memory load failed (starting empty):", err);
 	}
 }
 
 async function saveUserGraph(): Promise<void> {
 	try {
-		await backend.set(PERSONAL_GRAPH_STORE, PERSONAL_GRAPH_KEY, userGraph.serialize());
+		await backend.set(LEXICON_STORE, LEXICON_TERMS_KEY, userGraph.serialize());
 	} catch (err) {
-		dbgError("personal graph save failed:", err);
+		dbgError("term memory save failed:", err);
 	}
 }
 
-// Export: download the personal graph as JSON (the real durability story —
-// IndexedDB can be evicted and PersistentStorageDialog is broken upstream).
-function downloadPersonalGraph(): void {
-	const blob = new Blob([JSON.stringify(userGraph.serialize(), null, 2)], {
+// The exportable lexicon: the term glossary PLUS the speech-adaptation data and
+// the running context — everything the memory pipeline knows about the user.
+interface LexiconAsset {
+	lexicon_version: number;
+	terms: GraphAsset;
+	stt: SttLexicon;
+	running_context: RunningContextEntry[];
+}
+
+// Export: download the lexicon as JSON (the real durability story — IndexedDB
+// can be evicted and PersistentStorageDialog is broken upstream).
+function downloadLexicon(): void {
+	const asset: LexiconAsset = {
+		lexicon_version: 1,
+		terms: userGraph.serialize(),
+		stt: pipeline.getSttLexicon(),
+		running_context: pipeline.getRunningContext(),
+	};
+	const blob = new Blob([JSON.stringify(asset, null, 2)], {
 		type: "application/json",
 	});
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
-	a.download = `myriapod-personal-graph-${new Date().toISOString().slice(0, 10)}.json`;
+	a.download = `myriapod-lexicon-${new Date().toISOString().slice(0, 10)}.json`;
 	a.click();
 	URL.revokeObjectURL(url);
 }
 
-// Import: replace the personal graph from an uploaded export and persist it.
-async function importPersonalGraphFromFile(file: File): Promise<void> {
-	const asset = JSON.parse(await file.text()) as GraphAsset;
-	if (!asset || typeof asset !== "object" || typeof asset.thoughts !== "object") {
-		throw new Error("not a Myriapod personal-graph export");
+// Import: replace the lexicon from an uploaded export and persist it.
+async function importLexiconFromFile(file: File): Promise<void> {
+	const asset = JSON.parse(await file.text()) as LexiconAsset;
+	if (!asset || typeof asset !== "object" || typeof asset.terms?.thoughts !== "object") {
+		throw new Error("not a Myriapod lexicon export");
 	}
-	userGraph = new Graph(asset);
+	userGraph = new Graph(asset.terms);
+	pipeline.setSttLexicon(asset.stt ?? emptySttLexicon());
+	pipeline.setRunningContext(asset.running_context ?? []);
 	await saveUserGraph();
-	dbg(`personal graph imported: ${userGraph.thoughts.size} thoughts`);
+	await pipeline.persist();
+	dbg(`lexicon imported: ${userGraph.thoughts.size} terms`);
 }
 
-// Wipe the personal graph (Settings → delete). The privacy assurance: the visitor
-// can remove everything Myriapod remembered, not just trust that it's local.
-async function deletePersonalGraph(): Promise<void> {
+// Wipe the memory (Settings → delete). The privacy assurance: the visitor can
+// remove everything Myriapod remembered — terms, speech data, summaries — not
+// just trust that it's local.
+async function deleteLexicon(): Promise<void> {
 	userGraph = Graph.empty();
+	pipeline.setSttLexicon(emptySttLexicon());
+	pipeline.setRunningContext([]);
 	await saveUserGraph();
-	updateGutters({ terms: [], triples: [] });
-	dbg("personal graph deleted (reset to empty)");
+	await pipeline.persist();
+	updateGutters({ terms: [] });
+	dbg("lexicon deleted (reset to empty)");
 }
 
 // agent.prompt accepts a string or an AgentMessage[]; pull the user's text out.
@@ -904,30 +803,29 @@ const lastAssistantText = (messages: AgentMessage[]): string => {
 	return "";
 };
 
-// The gutters: term matches (left) + triples (right). Owned plain DOM we update
-// imperatively from the latest retrieval's VACUUM set (full pre-dedup), so they
-// show what WOULD retrieve this turn even when the injection deduped some out.
-// Single-graph (personal only) since the stock/FAQ graph was dropped — no
-// provenance split anymore.
+// The gutters: term matches (left) + the pipeline activity feed (right). Owned
+// plain DOM we update imperatively. The left column renders the latest
+// retrieval's VACUUM set (full pre-dedup), so it shows what WOULD retrieve this
+// turn even when the injection deduped some out. The right column renders the
+// pipeline agents' recorded actions — the memory tending itself, made visible.
 const termCard = (t: TermMatch) => html`<div class="cw-term">
 	<div class="cw-term-label">${t.label}</div>
 	<div class="cw-term-desc">${t.description}</div>
 </div>`;
-const tripleCard = (t: Triple) => html`<div class="cw-triple">
-	<span class="cw-tri-s">${t.subject}</span>
-	<span class="cw-tri-p">--${t.predicate}--&gt;</span>
-	<span class="cw-tri-o">${t.object}</span>
-	${(t.clauses ?? []).map((c) => html`<div class="cw-clause">[${c.type.toUpperCase()}: ${c.text}]</div>`)}
+const activityCard = (agent: string, line: string) => html`<div class="cw-activity">
+	<span class="cw-activity-agent">${agent}</span>
+	<span class="cw-activity-line">${line}</span>
 </div>`;
 
 const renderGutters = () => {
 	if (!leftGutter || !rightGutter) return;
 	const terms = lastVacuum?.terms ?? [];
-	const triples = lastVacuum?.triples ?? [];
+	// Newest activity on top.
+	const activity = pipeline ? [...pipeline.activity].reverse() : [];
 
 	render(
 		html`
-			<div class="cw-gutter-title">Nodes</div>
+			<div class="cw-gutter-title">Memory</div>
 			<div class="cw-gutter-inner">
 				${terms.length ? terms.map(termCard) : html`<div class="cw-gutter-empty">no matches</div>`}
 			</div>
@@ -936,9 +834,13 @@ const renderGutters = () => {
 	);
 	render(
 		html`
-			<div class="cw-gutter-title">Relationships</div>
+			<div class="cw-gutter-title">Activity</div>
 			<div class="cw-gutter-inner">
-				${triples.length ? triples.map(tripleCard) : html`<div class="cw-gutter-empty">no triples</div>`}
+				${
+					activity.length
+						? activity.map((a) => activityCard(a.agent, a.line))
+						: html`<div class="cw-gutter-empty">no activity yet</div>`
+				}
 			</div>
 		`,
 		rightGutter,
@@ -966,7 +868,7 @@ const fitTermDescriptions = () => {
 	}
 };
 
-const updateGutters = (vacuum: { terms: TermMatch[]; triples: Triple[] }) => {
+const updateGutters = (vacuum: { terms: TermMatch[] }) => {
 	lastVacuum = vacuum;
 	renderGutters();
 	// Fit term descriptions to the column height after layout settles.
@@ -997,29 +899,38 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	agent = new Agent({
 		// Force the resolved serving-path model (own-key → OpenRouter direct; owner-funded
 		// → the metering proxy), overriding any model a restored session stored, and the
-		// shared persona system prompt (voice + typed both run on this one agent).
-		initialState: { ...baseState, model: servingPath.model, systemPrompt: VOICE_SYSTEM_PROMPT },
+		// shared persona system prompt (voice + typed both run on this one agent) — with
+		// the running-context band appended: what the summary agent remembers from prior
+		// conversations, the cross-session continuity the term memory alone can't carry.
+		initialState: {
+			...baseState,
+			model: servingPath.model,
+			systemPrompt: VOICE_SYSTEM_PROMPT + (pipeline?.runningContextBlock() ?? ""),
+		},
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
 
-	// Fresh per-conversation dedup ledger.
+	// Fresh per-conversation dedup ledger + a fresh running-context session key
+	// (the summary agent rewrites THIS conversation's entry under it).
 	ledger = new InjectedLedger();
+	pipeline?.startSession();
 
 	// DESIGN 2 INJECTION. Wrap the send path so that, BEFORE the run's context
 	// snapshot is taken, we: (1) run browser-local retrieval, (2) update the
-	// gutters with the full vacuum set, (3) append a persistent hidden kg-context
-	// breadcrumb of the deduped injection block to agent.state.messages. The
-	// breadcrumb accumulates across turns (like CC's additionalContext), so
-	// ledger dedup is correct rather than lossy. transformContext is NOT used —
-	// its output is ephemeral and would drop earlier turns' context.
+	// left gutter with the full vacuum set, (3) append a persistent hidden
+	// memory-context breadcrumb of the deduped injection block to
+	// agent.state.messages. The breadcrumb accumulates across turns (like CC's
+	// additionalContext), so ledger dedup is correct rather than lossy.
+	// transformContext is NOT used — its output is ephemeral and would drop
+	// earlier turns' context.
 	const origPrompt = agent.prompt.bind(agent);
 	(agent as unknown as { prompt: (...a: unknown[]) => Promise<void> }).prompt = async (
 		input: unknown,
 		...rest: unknown[]
 	) => {
 		// HISTORY BOUNDING (Pi message-level compaction). Runs before retrieval + the
-		// kg-context append. At ~1M context this rarely fires, but it keeps a very long
+		// memory-context append. At ~1M context this rarely fires, but it keeps a very long
 		// conversation from overflowing: estimate context tokens, and once over the
 		// threshold, summarize the older messages and replace them with a single
 		// compaction-summary message (recent turns preserved). The high-level
@@ -1071,7 +982,6 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 
 		try {
 			const userText = extractUserText(input as AgentMessage | AgentMessage[] | string);
-			pendingTurnUserText = userText; // stash for the agent_end ingestion trigger
 			if (userText.trim()) {
 				// First anonymous send (no grant token yet): welcome the visitor once
 				// (free credits + the own-key / family alternatives), collect the honeypot
@@ -1083,25 +993,19 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				// who never saw the welcome modal.
 				void ensureMemoryConsent();
 				const agentText = lastAssistantText(agent.state.messages);
-				// Retrieval runs over the per-browser personal graph (the user's own
-				// memory). The frozen stock/FAQ graph was dropped in the
-				// standalone-thesis turn — this is now a single-graph path.
+				// Retrieval runs over the per-browser term memory (the user's own).
 				const userR = retrieve(userGraph, ledger, userText, agentText);
-				const vacuum = {
-					terms: userR.vacuum.terms.map((t) => ({ ...t, source: "user" as const })),
-					triples: userR.vacuum.triples.map((t) => ({ ...t, source: "user" as const })),
-				};
-				updateGutters(vacuum);
+				updateGutters({ terms: userR.vacuum.terms });
 				if (userR.injectionBlock) {
-					agent.state.messages = [...agent.state.messages, createKgContextMessage(userR.injectionBlock)];
+					agent.state.messages = [...agent.state.messages, createMemoryContextMessage(userR.injectionBlock)];
 				}
 				dbg(
-					`kg retrieve: user[${userR.vacuum.terms.length}t/${userR.vacuum.triples.length}r] ` +
+					`memory retrieve: ${userR.vacuum.terms.length} term(s), ` +
 						`injected=${userR.injectionBlock ? "yes" : "no (deduped)"}`,
 				);
 			}
 		} catch (err) {
-			dbgError("kg retrieval failed (send proceeds without injection):", err);
+			dbgError("memory retrieval failed (send proceeds without injection):", err);
 		}
 		return origPrompt(input as AgentMessage | AgentMessage[], ...(rest as []));
 	};
@@ -1140,28 +1044,29 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				updateCount++;
 			}
 
-			// VOICE TTS TAP. A voice-initiated turn (voiceTurnSpeaking, held across the
-			// whole turn incl. tool-call round-trips) lazily opens a TTS speaker on the
-			// FIRST text delta of each assistant message — never on message_start — so a
-			// tool-call message with no spoken text stays silent, while the final answer
-			// (a SEPARATE assistant message after the tool result) opens its own speaker
-			// and speaks. Each message's queue closes at message_end; the turn's speak
-			// intent retires at agent_end. toolResult messages never emit text_delta, so
-			// they never reach TTS. Typed turns leave voiceTurnSpeaking false → silent.
-			// Keep this CHEAP — the core awaits each listener, so push-to-queue only.
-			if (type === "message_start" && event.message?.role === "assistant") {
-				// New assistant message: let its text (if any) open a fresh speaker.
-				voiceMsgDone = false;
-			} else if (type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-				if (voiceTurnSpeaking && !ttsMuted && synth && !voiceQueue && !voiceMsgDone) {
+			// VOICE TTS TAP. ONE speaker per TURN, not per message. A voice turn
+			// (voiceTurnSpeaking, held across the whole turn incl. tool-call round-trips)
+			// opens a single TTS queue on the FIRST text delta of the turn and feeds
+			// EVERY assistant message's text into it. A tool call mid-turn is just a pause
+			// in the text stream: the queue blocks, the current audio keeps draining via
+			// the synth's pace timer, and the post-tool answer resumes the SAME speaker.
+			// This is the fix for the tool-call cut — a per-message speaker would call
+			// synth.speak() again, and run() bumps the synth epoch + resets pacing on
+			// entry, wiping the still-playing pre-tool audio. At each message boundary we
+			// push a newline so the chunker flushes a mid-clause tail (a tool-call message
+			// that ended without terminal punctuation) instead of concatenating it with
+			// the next message's first words. toolResult messages emit no text_delta.
+			// Typed turns leave voiceTurnSpeaking false → silent. Keep this CHEAP — the
+			// core awaits each listener, so push-to-queue only.
+			if (type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+				if (voiceTurnSpeaking && !ttsMuted && synth && !voiceQueue && !voiceTurnCut) {
 					voiceQueue = new AsyncStringQueue();
 					synth.speak(voiceQueue).catch((err) => dbgError("voice TTS speak failed (non-fatal):", err));
 				}
 				voiceQueue?.push(event.assistantMessageEvent.delta);
 			} else if (type === "message_end") {
-				voiceQueue?.close();
-				voiceQueue = null;
-				voiceMsgDone = true;
+				// Flush the chunker at the boundary; keep the speaker OPEN for the turn.
+				voiceQueue?.push("\n");
 			}
 
 			// Light logging — skip the per-token message_update spam.
@@ -1201,16 +1106,19 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// finishRun() flips isStreaming=false AFTER agent_end with no event, so
 			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
+				// Read the voice marker BEFORE retiring it — the pipeline's audit agent
+				// applies its speech-to-text functions only on voice turns.
+				const wasVoiceTurn = voiceTurnSpeaking;
 				voiceTurnSpeaking = false; // turn truly done (no more tool calls) → retire the speak intent
+				voiceQueue?.close(); // close the turn's single speaker (drains remaining audio, then ends)
+				voiceQueue = null;
+				voiceTurnCut = false; // reset the barge-in guard for the next turn
 				setTimeout(forceChatRepaint, 100);
-				// Typed chat: the agent turn just ended → collect the exchange and arm the
-				// debounce (text has no mic, so agent-done is the conversation pause).
-				const turnUserText = pendingTurnUserText;
-				pendingTurnUserText = "";
-				queueIngest(turnUserText, lastAssistantText(agent.state.messages));
-				// Arm the debounce only when the mic is off — if it's on, the conversation
-				// is still live (the user is about to speak again), so ingestion waits.
-				if (!micOn) armIngestDebounce();
+				// The turn is over → one pipeline tick (consent-gated; fire-and-forget;
+				// a turn ending mid-tick coalesces into exactly one follow-up).
+				if (memoryConsent === "granted") {
+					pipeline.onTurnEnd(() => agent.state.messages, wasVoiceTurn);
+				}
 			}
 
 			// Re-render ONLY the header (its own DOM node) and ONLY when its
@@ -1249,15 +1157,15 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	// Install our native tools, OVERWRITING ChatPanel's auto-prepended `artifacts` tool
 	// (`[artifactsPanel.tool, ...toolsFactory()]`) — this also keeps the artifacts side
 	// panel out. One assignment covers newSession AND loadSession (the per-turn context
-	// snapshot + the prompt wrapper don't touch state.tools). The KG tools read the live
-	// personal graph via a getter (it's reassigned on import/delete). web_search is
+	// snapshot + the prompt wrapper don't touch state.tools). The memory tools read the
+	// live term store via a getter (it's reassigned on import/delete). web_search is
 	// universal — table-stakes for every visitor — so it's registered on every path. The
 	// endpoint is open (per-IP rate-limited, not principal-gated): owner-funded paths send
 	// their proxy bearer; own-key sends NO bearer, so its OpenRouter key never touches the
 	// proxy.
 	const tools = [
-		createKgSearchTool(() => userGraph),
-		createKgDumpTool(() => userGraph),
+		createMemorySearchTool(() => userGraph),
+		createMemoryDumpTool(() => userGraph),
 		createWebSearchTool({
 			endpoint: WEB_SEARCH_ENDPOINT,
 			getBearer: () => (servingPath.mode === "own" ? "" : servingPath.auth),
@@ -1327,9 +1235,10 @@ const renderAbout = () => html`
 			<h1 class="text-2xl font-semibold text-primary">About Myriapod</h1>
 			<p class="text-sm text-muted-foreground">Placeholder — a fuller write-up is coming.</p>
 			<p class="text-sm leading-relaxed">
-				Myriapod is a browser-local voice agent with a self-maintaining knowledge-graph memory
-				layer for LLM agents — speak or type, and a personal knowledge graph grows in your own
-				browser from the conversation. The source lives on GitHub:
+				Myriapod is a browser-local voice agent with a self-maintaining memory — after every
+				turn, a small pipeline of background agents tends a glossary of your world, kept in
+				your own browser. Speak or type, and the memory grows from the conversation. The
+				source lives on GitHub:
 			</p>
 			<a
 				class="text-primary underline break-all text-sm"
@@ -1487,9 +1396,9 @@ async function initApp() {
 	chatPanel = new ChatPanel(); // mounted once, owns its own rendering/scrolling
 	chatPanel.classList.add("cw-chat");
 
-	// Retrieval gutters flank the centered chat column (term matches left, triples
-	// right) — always present (dedicated space, empty until the first match), only
-	// dropped on true mobile via the .cw-gutter media query.
+	// The gutters flank the centered chat column (term matches left, pipeline
+	// activity right) — always present (dedicated space, empty until first use),
+	// only dropped on true mobile via the .cw-gutter media query.
 	leftGutter = document.createElement("div");
 	leftGutter.className = "cw-gutter cw-gutter-left";
 	rightGutter = document.createElement("div");
@@ -1548,7 +1457,7 @@ async function initApp() {
 		synth?.stop();
 		voiceQueue?.close();
 		voiceQueue = null;
-		voiceMsgDone = true; // don't let trailing text deltas of this message re-open a speaker after a cut
+		voiceTurnCut = true; // don't reopen a speaker for the rest of this turn after a cut
 	};
 
 	// --- Voice-broker lease lifecycle (all no-ops when VOICE_BROKER_ENABLED is off) ---
@@ -1665,7 +1574,6 @@ async function initApp() {
 		onStart: async (stream) => {
 			micOn = true;
 			cutVoiceAudio(); // barge-in: toggling the mic on cuts any in-progress reply's audio
-			cancelIngestDebounce(); // recording resumed → no ingestion while the convo is live
 			// First launch (or a stale grant token): settle the credit grant + memory opt-in
 			// up front, before the recorder starts, so the modals never interrupt mid-utterance.
 			// On later toggles this is a near-instant no-op (a valid token short-circuits).
@@ -1737,11 +1645,22 @@ async function initApp() {
 					dbgError("voice transcription failed:", err);
 					return;
 				}
+				// Speech-adaptation pass: the lexicon's auto-replace rules rewrite known
+				// mistranscriptions before the transcript reaches the display or the model.
+				const rules = pipeline.getSttLexicon().autoReplace;
+				if (rules.length) {
+					const fixed = applyAutoReplace(transcript, rules);
+					if (fixed !== transcript) {
+						dbg(`auto-replace rewrote transcript: "${transcript}" → "${fixed}"`);
+						transcript = fixed;
+					}
+				}
 				// Real transcript is in hand — drop the cue right before the user bubble lands
 				// (avoids a flash) and hand the transcript to the agent.
 				dropPlaceholder();
 				if (transcript.trim()) {
 					voiceTurnSpeaking = true; // gate: this turn's reply speaks, incl. the post-tool final answer (see TTS tap)
+					voiceTurnCut = false; // fresh turn — clear any prior barge-in guard
 					void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
 				}
 			} finally {
@@ -1760,34 +1679,30 @@ async function initApp() {
 		}
 	});
 
-	// Tear the voice legs down on page unload, and flush any queued ingestion now — we
-	// can't wait out the debounce, and the fetch may not complete before the page closes.
-	// (agent_end already queued completed exchanges; this just pushes the batch early.)
+	// Tear the voice legs down on page unload. A pipeline tick in flight simply
+	// dies with the page — the previous turn's tick already persisted everything,
+	// and per-turn firing is exactly what bounds the loss to one turn.
 	window.addEventListener("beforeunload", () => {
-		void flushIngestion();
 		releaseVoiceLease(true); // free the voice slot on tab close (sendBeacon; no-op if none held)
 		synth?.dispose();
 		sttClient?.close();
 	});
 
 	// Memory consent + the indicator button. Load the saved opt-in first so the
-	// first turn's ingestion gate is correct, then mount the button (reflects consent
-	// + ingestion activity; click force-saves when on, or offers opt-in when off).
+	// first turn's pipeline gate is correct, then mount the button (reflects consent
+	// + pipeline activity; click offers opt-in when off).
 	await loadMemoryConsent();
 	const onMemoryClick = () => {
-		if (memoryConsent === "granted") {
-			void flushIngestion(); // force-save the queued batch now (skip the debounce)
-		} else {
+		if (memoryConsent !== "granted") {
 			void (async () => setMemoryConsent(await showConsentModal()))();
 		}
 	};
 	const memoryButton = installMemoryButton({
 		getVisual: () => {
 			if (memoryConsent !== "granted") return "off";
-			if (ingestActivity === "running") return "running";
-			if (ingestActivity === "armed") return "armed";
-			// Idle: "pending" if there's un-ingested content to save, else "saved".
-			return ingestPending.length ? "pending" : "saved";
+			// `pipeline?` — the button mounts before the pipeline is constructed a few
+			// lines below; until then it just reads as idle ("saved").
+			return pipeline?.isRunning ? "running" : "saved";
 		},
 		onClick: onMemoryClick,
 	});
@@ -1807,6 +1722,27 @@ async function initApp() {
 	});
 
 	await loadUserGraph();
+
+	// The per-turn memory pipeline. Constructed after the graph loads; its state
+	// (action buffers, running context, speech data, flags) loads in init().
+	pipeline = new PipelineRuntime({
+		backend,
+		getGraph: () => userGraph,
+		saveGraph: saveUserGraph,
+		embed: makeEmbedClient({
+			endpoint: EMBED_ENDPOINT,
+			getBearer: () => (servingPath.mode === "own" ? "" : servingPath.auth),
+		}),
+		getModel: () => servingPath.model,
+		getBaseUrl: () => servingPath.baseUrl,
+		getModelId: () => MYRIAPOD_MODEL_ID,
+		getAuth: () => servingPath.auth,
+		addCost: addIngestionCostToSession,
+		onStateChange: () => refreshMemoryUi(),
+		onActivity: () => renderGutters(),
+	});
+	await pipeline.init();
+	renderGutters(); // re-render with the seeded activity feed
 
 	// PersistentStorageDialog is broken upstream — export/import (Memory settings
 	// tab) is the durability story instead.

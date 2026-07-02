@@ -1,34 +1,7 @@
-// Retrieval tunables — the single source of truth for PPR and the output caps.
-
-// PPR (query_ppr)
-export const PPR_ALPHA = 0.5; // restart probability (HippoRAG-optimal)
-export const PPR_MAX_ITER = 100;
-export const PPR_TOL = 1e-6;
-export const INV_FREQ_PPR = true; // inverse-frequency hub suppression
-export const INV_FREQ_ALPHA = 0.7;
-export const IS_A_DECAY = 0.5; // personalization decay per is-a hop
-export const IS_A_MAX_DEPTH = 2; // transitive is-a expansion depth
-export const REVERSE_EDGE_WEIGHT = 0.5; // auto-reverse / commutative reverse weight
-
-// PPR overfetch before dedup + per-head cap (was the MMR candidate pool; the
-// personal graph has no embeddings, so MMR diversity rerank was a no-op and was
-// removed — top-N by PPR weight after dedup is the result).
-export const PPR_OVERFETCH = 30;
+// Memory tunables — the single source of truth for retrieval and write caps.
 
 // Output caps
-export const TRIPLES_PER_RETRIEVE = 3;
-export const MAX_TRIPLES_PER_HEAD = 3;
 export const TERMS_PER_RETRIEVE = 20;
-export const MAX_DOC_NODES = 3; // doc:* term-match nodes per turn
 
-// Ingestion write-side (description-length validation)
+// Write-side (description-length validation)
 export const DESCRIPTION_WORD_CAP = 100;
-
-// Edge-type semantics
-export const COMMUTATIVE_TYPES = new Set(["relates-to"]);
-export const RETRIEVAL_ONLY_EDGE_TYPES = new Set([
-	"alias-of",
-	"hard-linked",
-	"mistranscription-of",
-]);
-export const TERM_ALIAS_EDGE_TYPES = new Set(["alias-of", "mistranscription-of"]);

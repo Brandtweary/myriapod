@@ -1,19 +1,16 @@
-// The graph engine — load + indexes + term-match, plus the mutable graph API
-// (getOrCreate / addLink / expireLink / serialize) that the personal/user graph
-// is built on. PPR / seed extraction live in their own modules and operate on a
-// loaded Graph.
+// The term-store engine — load + indexes + term-match, plus the mutable store
+// API (getOrCreate / aliases / rename / merge / remove) that the personal
+// memory is built on. A keyword router over evergreen descriptions: no edges,
+// no graph traversal.
 
-import { NLTK_ENGLISH_STOPWORDS } from "./stopwords";
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
-import { COMMUTATIVE_TYPES, DESCRIPTION_WORD_CAP, TERM_ALIAS_EDGE_TYPES } from "./config";
-import type { Clause, GraphAsset, LinkData, TermMatch, Thought } from "./types";
+import { DESCRIPTION_WORD_CAP } from "./config";
+import type { GraphAsset, TermMatch, Thought } from "./types";
 
 interface TermEntry {
 	node_id: string;
 	no_stem: boolean;
 }
-
-const GENERIC_DIRS = new Set(["areas", "commands"]);
 
 function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -23,7 +20,7 @@ function nowIso(): string {
 	return new Date().toISOString();
 }
 
-/** Thrown at any write site when a node description exceeds the word cap. */
+/** Thrown at any write site when a term description exceeds the word cap. */
 export class DescriptionTooLongError extends Error {
 	constructor(
 		public readonly label: string,
@@ -37,9 +34,9 @@ export class DescriptionTooLongError extends Error {
 export class Graph {
 	thoughts: Map<string, Thought> = new Map();
 
-	// lowercase label -> id (nodes only)
+	// lowercase label -> id
 	labelIndex: Map<string, string> = new Map();
-	// stemmed label -> set of ids (nodes only)
+	// stemmed label -> set of ids
 	stemIndex: Map<string, Set<string>> = new Map();
 
 	// term-match indexes (built lazily)
@@ -54,20 +51,11 @@ export class Graph {
 	// -- load() -----------------------------------------------------------
 	private load(asset: GraphAsset): void {
 		for (const [id, t] of Object.entries(asset.thoughts)) {
+			if (!Array.isArray(t.aliases)) t.aliases = [];
 			this.thoughts.set(id, t);
-			if (!this.isLink(t)) {
-				this.labelIndex.set(t.label.toLowerCase(), t.id);
-				this.indexStem(t);
-			}
+			this.labelIndex.set(t.label.toLowerCase(), t.id);
+			this.indexStem(t);
 		}
-	}
-
-	isLink(t: Thought): boolean {
-		return t.link_data != null;
-	}
-
-	isExpired(t: Thought): boolean {
-		return !!t.link_data?.expired_at;
 	}
 
 	private indexStem(t: Thought): void {
@@ -80,12 +68,22 @@ export class Graph {
 		set.add(t.id);
 	}
 
+	private unindex(t: Thought): void {
+		this.labelIndex.delete(t.label.toLowerCase());
+		const stemmed = stemWord(t.label);
+		const set = this.stemIndex.get(stemmed);
+		if (set) {
+			set.delete(t.id);
+			if (!set.size) this.stemIndex.delete(stemmed);
+		}
+	}
+
 	// -- mutation: CRUD ---------------------------------------------------
 
-	/** Empty mutable graph — the personal/user graph starts here. */
+	/** Empty mutable store — the personal memory starts here. */
 	static empty(): Graph {
 		return new Graph({
-			meta: { version: 1, node_count: 0, edge_count: 0, last_modified: nowIso() },
+			meta: { version: 1, node_count: 0, last_modified: nowIso() },
 			thoughts: {},
 		});
 	}
@@ -99,7 +97,7 @@ export class Graph {
 		t.updated_at = nowIso();
 	}
 
-	private fire(t: Thought): void {
+	fire(t: Thought): void {
 		t.hit_count = (t.hit_count ?? 0) + 1;
 		t.last_fired = nowIso();
 	}
@@ -116,19 +114,16 @@ export class Graph {
 		this.termMulti = [];
 	}
 
-	// getOrCreate — label-upsert; on collision only description /
-	// entity_type are updated (never weight). 100-word cap enforced before write.
-	getOrCreate(
-		label: string,
-		weight = 1,
-		description?: string | null,
-		entityType?: string | null,
-	): Thought {
+	// getOrCreate — label-upsert; on collision only description / entity_type
+	// are updated. 100-word cap enforced before write. A description change
+	// nulls the stored embedding (stale until re-embedded on the write path).
+	getOrCreate(label: string, description?: string | null, entityType?: string | null): Thought {
 		const existing = this.get(label);
 		if (existing) {
 			if (description != null && existing.description !== description) {
 				this.validateDescriptionLength(description, label);
 				existing.description = description;
+				existing.embedding = null;
 				this.touch(existing);
 				this.invalidateTermIndex(); // null→value changes term-index membership
 			}
@@ -143,13 +138,11 @@ export class Graph {
 		const t: Thought = {
 			id: crypto.randomUUID(),
 			label,
-			weight,
 			last_fired: now,
 			description: description ?? null,
 			entity_type: entityType ?? null,
-			links_to: [],
-			links_from: [],
-			link_data: null,
+			aliases: [],
+			embedding: null,
 			hit_count: 0,
 			created_at: now,
 			updated_at: now,
@@ -162,177 +155,123 @@ export class Graph {
 		return t;
 	}
 
-	// findLink — returns the matching link Thought INCLUDING expired
-	// ones (the addLink reactivation branch depends on this).
-	findLink(fromId: string, linkType: string, toId: string): Thought | null {
-		const src = this.thoughts.get(fromId);
-		if (!src) return null;
-		for (const linkId of src.links_to) {
-			const link = this.thoughts.get(linkId);
-			const ld = link?.link_data;
-			if (ld && ld.from_id === fromId && ld.link_type === linkType && ld.to_id === toId) {
-				return link!;
-			}
+	/** Add an alias (alternative surface form) to a term. Returns false when the
+	 * alias is already the label or alias of some term. */
+	addAlias(label: string, alias: string): boolean {
+		const t = this.get(label);
+		if (!t) return false;
+		const a = alias.trim().toLowerCase();
+		if (!a || a === t.label.toLowerCase()) return false;
+		if (this.labelIndex.has(a)) return false; // collides with another term's label
+		for (const other of this.thoughts.values()) {
+			if (other.aliases.includes(a)) return false;
 		}
-		return null;
-	}
-
-	hasLink(sourceLabel: string, linkType: string, targetLabel: string): boolean {
-		const source = this.get(sourceLabel);
-		const target = this.get(targetLabel);
-		if (!source || !target) return false;
-		return this.findLink(source.id, linkType, target.id) != null;
-	}
-
-	// addLink — implicit endpoint creation, reactivate-if-expired /
-	// merge-clauses-by-type on collision, auto-create commutative reverse.
-	addLink(
-		sourceLabel: string,
-		linkType: string,
-		targetLabel: string,
-		weight = 1,
-		clauses?: Clause[] | null,
-		isReverse = false,
-	): Thought | null {
-		const source = this.getOrCreate(sourceLabel);
-		const target = this.getOrCreate(targetLabel);
-		if (source.id === target.id) return null;
-
-		const existing = this.findLink(source.id, linkType, target.id);
-		if (existing && existing.link_data) {
-			if (this.isExpired(existing)) {
-				delete existing.link_data.expired_at;
-				existing.weight = weight;
-				if (clauses) existing.link_data.clauses = clauses;
-				this.touch(existing);
-				this.invalidateTermIndex();
-				if (!isReverse && COMMUTATIVE_TYPES.has(linkType)) {
-					const reverse = this.findLink(target.id, linkType, source.id);
-					if (reverse?.link_data && this.isExpired(reverse)) {
-						delete reverse.link_data.expired_at;
-						reverse.weight = weight;
-						this.touch(reverse);
-					}
-				}
-			} else if (clauses) {
-				let merged = [...(existing.link_data.clauses ?? [])];
-				const existingTypes = new Set(merged.map((c) => c.type));
-				for (const c of clauses) {
-					if (existingTypes.has(c.type)) merged = merged.filter((ec) => ec.type !== c.type);
-					merged.push(c);
-				}
-				existing.link_data.clauses = merged;
-				this.touch(existing);
-			}
-			this.fire(existing);
-			return existing;
-		}
-
-		const now = nowIso();
-		const linkData: LinkData = { from_id: source.id, link_type: linkType, to_id: target.id };
-		if (clauses) linkData.clauses = clauses;
-		const link: Thought = {
-			id: crypto.randomUUID(),
-			label: `${sourceLabel}::${linkType}::${targetLabel}`,
-			weight,
-			last_fired: now,
-			description: null,
-			entity_type: null,
-			links_to: [],
-			links_from: [],
-			link_data: linkData,
-			hit_count: 0,
-			created_at: now,
-			updated_at: now,
-			metadata: null,
-		};
-		this.thoughts.set(link.id, link);
-		source.links_to.push(link.id);
-		target.links_from.push(link.id);
+		t.aliases.push(a);
+		this.touch(t);
 		this.invalidateTermIndex();
-
-		if (!isReverse && COMMUTATIVE_TYPES.has(linkType)) {
-			this.addLink(targetLabel, linkType, sourceLabel, weight, null, true);
-		}
-		return link;
+		return true;
 	}
 
-	// expireLink — soft-delete via expired_at + commutative reverse.
-	expireLink(fromId: string, linkType: string, toId: string): Thought | null {
-		const link = this.findLink(fromId, linkType, toId);
-		if (!link?.link_data) return null;
-		if (this.isExpired(link)) return link;
-		link.link_data.expired_at = nowIso();
-		this.touch(link);
+	removeAlias(label: string, alias: string): boolean {
+		const t = this.get(label);
+		if (!t) return false;
+		const a = alias.trim().toLowerCase();
+		const idx = t.aliases.indexOf(a);
+		if (idx < 0) return false;
+		t.aliases.splice(idx, 1);
+		this.touch(t);
 		this.invalidateTermIndex();
-		if (COMMUTATIVE_TYPES.has(linkType)) {
-			const reverse = this.findLink(toId, linkType, fromId);
-			if (reverse?.link_data && !this.isExpired(reverse)) {
-				reverse.link_data.expired_at = nowIso();
-				this.touch(reverse);
+		return true;
+	}
+
+	/** Relabel a term in place (description, aliases, hit count preserved). */
+	rename(oldLabel: string, newLabel: string): boolean {
+		const t = this.get(oldLabel);
+		if (!t) return false;
+		if (this.get(newLabel)) return false; // target label taken
+		this.unindex(t);
+		t.label = newLabel;
+		this.touch(t);
+		this.labelIndex.set(newLabel.toLowerCase(), t.id);
+		this.indexStem(t);
+		this.invalidateTermIndex();
+		return true;
+	}
+
+	/** Merge the loser term into the survivor: the loser's label + aliases become
+	 * survivor aliases, hit counts sum, the loser is deleted. The survivor's
+	 * description wins (update it separately if it should absorb detail). */
+	merge(loserLabel: string, survivorLabel: string): boolean {
+		const loser = this.get(loserLabel);
+		const survivor = this.get(survivorLabel);
+		if (!loser || !survivor || loser.id === survivor.id) return false;
+		this.unindex(loser);
+		this.thoughts.delete(loser.id);
+		const taken = new Set(survivor.aliases);
+		for (const a of [loser.label.toLowerCase(), ...loser.aliases]) {
+			if (a !== survivor.label.toLowerCase() && !taken.has(a)) {
+				survivor.aliases.push(a);
+				taken.add(a);
 			}
 		}
-		return link;
+		survivor.hit_count = (survivor.hit_count ?? 0) + (loser.hit_count ?? 0);
+		this.touch(survivor);
+		this.invalidateTermIndex();
+		return true;
+	}
+
+	remove(label: string): boolean {
+		const t = this.get(label);
+		if (!t) return false;
+		this.unindex(t);
+		this.thoughts.delete(t.id);
+		this.invalidateTermIndex();
+		return true;
+	}
+
+	setNoStem(label: string, noStem: boolean): boolean {
+		const t = this.get(label);
+		if (!t) return false;
+		t.metadata = { ...(t.metadata ?? {}), no_stem: noStem };
+		this.touch(t);
+		this.invalidateTermIndex();
+		return true;
 	}
 
 	// Serialize to the GraphAsset shape for IndexedDB persistence.
 	serialize(): GraphAsset {
 		const thoughts: Record<string, Thought> = {};
 		let nodeCount = 0;
-		let edgeCount = 0;
 		for (const [id, t] of this.thoughts) {
 			thoughts[id] = t;
-			if (this.isLink(t)) edgeCount++;
-			else nodeCount++;
+			nodeCount++;
 		}
 		return {
-			meta: { version: 1, node_count: nodeCount, edge_count: edgeCount, last_modified: nowIso() },
+			meta: { version: 2, node_count: nodeCount, last_modified: nowIso() },
 			thoughts,
 		};
 	}
 
 	// -- searchText() -----------------------------------------------------
-	// A LITERAL substring/term search for the kg_search tool — distinct from
+	// A LITERAL substring search for the memory_search tool — distinct from
 	// termMatch (which is term-index-driven, descriptions-only, and runs the
-	// inverse direction) and from the PPR retrieval path. Lowercased `.includes`
-	// over each node's label + description; also scans live edges and folds in
-	// their endpoint nodes when the query hits an endpoint label or the
-	// link_type/predicate. Ranked by hit_count desc. Default limit 50, hard cap 100.
+	// inverse direction). Lowercased `.includes` over each term's label +
+	// description + aliases. Ranked by hit_count desc. Default limit 50,
+	// hard cap 100.
 	searchText(query: string, limit = 50): { label: string; description: string; hit_count: number }[] {
 		const q = query.trim().toLowerCase();
 		if (!q) return [];
 		const cap = Math.min(Math.max(limit, 1), 100);
-		const matchedIds = new Set<string>();
-
-		for (const t of this.thoughts.values()) {
-			if (this.isLink(t)) continue;
-			if (t.label.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q)) {
-				matchedIds.add(t.id);
-			}
-		}
-
-		// Live edges: include both endpoint nodes when the query matches an endpoint
-		// label or the predicate (link_type).
-		for (const t of this.thoughts.values()) {
-			if (!this.isLink(t) || this.isExpired(t)) continue;
-			const ld = t.link_data!;
-			const from = this.thoughts.get(ld.from_id);
-			const to = this.thoughts.get(ld.to_id);
-			const hit =
-				ld.link_type.toLowerCase().includes(q) ||
-				(from?.label.toLowerCase().includes(q) ?? false) ||
-				(to?.label.toLowerCase().includes(q) ?? false);
-			if (hit) {
-				if (from && !this.isLink(from)) matchedIds.add(from.id);
-				if (to && !this.isLink(to)) matchedIds.add(to.id);
-			}
-		}
 
 		const results: { label: string; description: string; hit_count: number }[] = [];
-		for (const id of matchedIds) {
-			const node = this.thoughts.get(id);
-			if (!node) continue;
-			results.push({ label: node.label, description: node.description ?? "", hit_count: node.hit_count });
+		for (const t of this.thoughts.values()) {
+			const hit =
+				t.label.toLowerCase().includes(q) ||
+				(t.description ?? "").toLowerCase().includes(q) ||
+				t.aliases.some((a) => a.includes(q));
+			if (hit) {
+				results.push({ label: t.label, description: t.description ?? "", hit_count: t.hit_count });
+			}
 		}
 		results.sort((a, b) => b.hit_count - a.hit_count);
 		return results.slice(0, cap);
@@ -343,7 +282,7 @@ export class Graph {
 		const termIndex = new Map<string, TermEntry>();
 
 		for (const t of this.thoughts.values()) {
-			if (this.isLink(t) || !t.description) continue;
+			if (!t.description) continue;
 
 			const noStem = t.metadata?.no_stem ?? true; // default: exact match
 			const preparedKey = noStem ? t.label.toLowerCase() : stemText(t.label);
@@ -358,39 +297,19 @@ export class Graph {
 				}
 			}
 
-			// Alias-resolving edges (alias-of / mistranscription-of) pointing TO
-			// this node: alias --alias-of--> target, so look at links_from.
-			for (const linkId of t.links_from) {
-				const link = this.thoughts.get(linkId);
-				if (!link || !link.link_data) continue;
-				if (this.isExpired(link)) continue;
-				if (!TERM_ALIAS_EDGE_TYPES.has(link.link_data.link_type)) continue;
-				const aliasNode = this.thoughts.get(link.link_data.from_id);
-				if (!aliasNode) continue;
-				const aliasNoStem = aliasNode.metadata?.no_stem ?? noStem;
-				const preparedAlias = aliasNoStem
-					? aliasNode.label.toLowerCase()
-					: stemText(aliasNode.label);
-				termIndex.set(preparedAlias, { node_id: t.id, no_stem: aliasNoStem });
-			}
-
-			// Document node path decomposition: sliding 2-word windows.
-			if (t.label.startsWith("doc:")) {
-				let pathStr = t.label.slice(4);
-				if (pathStr.endsWith(".md")) pathStr = pathStr.slice(0, -3);
-				const words: string[] = [];
-				for (const part of pathStr.split("/")) {
-					for (const word of part.split("_")) {
-						const w = word.toLowerCase().trim();
-						if (w && !GENERIC_DIRS.has(w) && !NLTK_ENGLISH_STOPWORDS.has(w)) {
-							words.push(w);
-						}
-					}
+			// Explicit aliases (spoken variants, abbreviations, persistent
+			// mistranscriptions) — always exact-matched. Hyphenated aliases get the
+			// same space-separated variant as labels (a hyphenated key never matches
+			// the tokenizer's split words otherwise).
+			for (const alias of t.aliases) {
+				const preparedAlias = alias.toLowerCase();
+				if (!termIndex.has(preparedAlias)) {
+					termIndex.set(preparedAlias, { node_id: t.id, no_stem: true });
 				}
-				for (let i = 0; i < words.length - 1; i++) {
-					const bigram = `${words[i]} ${words[i + 1]}`;
-					if (!termIndex.has(bigram)) {
-						termIndex.set(bigram, { node_id: t.id, no_stem: true });
+				if (alias.includes("-")) {
+					const spaceAlias = alias.replace(/-/g, " ").toLowerCase();
+					if (!termIndex.has(spaceAlias)) {
+						termIndex.set(spaceAlias, { node_id: t.id, no_stem: true });
 					}
 				}
 			}
@@ -451,8 +370,8 @@ export class Graph {
 
 		// Slow path: multi-word keys via regex.
 		let stemmedTextCache: string | null = null;
-		// Depluralized text so a multi-word exact key ("knowledge graph") still
-		// matches an S-pluralized phrase ("knowledge graphs") in the input.
+		// Depluralized text so a multi-word exact key ("term store") still
+		// matches an S-pluralized phrase ("term stores") in the input.
 		const singularText = tokenize(lowercased).map((t) => depluralize(t)).join(" ");
 		for (const [preparedKey, data] of this.termMulti) {
 			const pattern = new RegExp(`\\b${escapeRegExp(preparedKey)}\\b`);
@@ -465,24 +384,6 @@ export class Graph {
 				if (pattern.test(stemmedTextCache)) matchedIds.add(data.node_id);
 			}
 		}
-
-		// Resolve hard-linked edges bidirectionally.
-		const extraIds = new Set<string>();
-		for (const nodeId of matchedIds) {
-			const node = this.thoughts.get(nodeId);
-			if (!node) continue;
-			for (const linkId of [...node.links_to, ...node.links_from]) {
-				const link = this.thoughts.get(linkId);
-				if (!link || !link.link_data) continue;
-				if (this.isExpired(link)) continue;
-				if (link.link_data.link_type !== "hard-linked") continue;
-				const otherId =
-					link.link_data.from_id === nodeId ? link.link_data.to_id : link.link_data.from_id;
-				const other = this.thoughts.get(otherId);
-				if (other && other.description) extraIds.add(otherId);
-			}
-		}
-		for (const id of extraIds) matchedIds.add(id);
 
 		// Build results.
 		const results: TermMatch[] = [];

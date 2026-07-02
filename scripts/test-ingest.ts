@@ -1,16 +1,13 @@
-// Unit tests for the ingestion pipeline — tolerant parse + truncation
-// salvage, the apply control flow (orphan reject / clause-merge
-// gate / expiration), and the text helpers. Network completion is verified live.
+// Unit tests for the shared pipeline machinery — injected-context stripping,
+// the existing-memory dump, and the thin-turn guard. (Extraction is now a
+// tooled agent loop, verified live, not a JSON parser.) Also covers the
+// similarity primitives that back mint-time dedup.
 // Run from myriapod/:  node_modules/.bin/tsx scripts/test-ingest.ts
 
 import { Graph } from "../src/kg/graph.ts";
-import {
-	applyExtraction,
-	dumpExistingContext,
-	extractJsonObject,
-	parseExtraction,
-	stripInjectedContext,
-} from "../src/kg/ingest.ts";
+import { dumpExistingContext, hasContentWords, stripInjectedContext } from "../src/kg/ingest.ts";
+import { cosineSimilarity, findSimilarTerms, jaroWinkler } from "../src/kg/similarity.ts";
+import { applyAutoReplace, emptySttLexicon, mistranscriptionCount } from "../src/stt-lexicon.ts";
 
 let failures = 0;
 function check(name: string, cond: boolean): void {
@@ -18,87 +15,61 @@ function check(name: string, cond: boolean): void {
 	if (!cond) failures++;
 }
 
-// -- parseExtraction: valid + truncation salvage ---------------------------
-{
-	const valid = parseExtraction('{"entities":[],"relationships":[],"expirations":[]}');
-	check("valid JSON parses ok", valid.ok === true);
-
-	// Truncated mid second entity object — salvage the first, drop the partial.
-	const truncated = parseExtraction(
-		'{"entities":[{"label":"alpha","type":"concept","summary":"x"},{"label":"be',
-	);
-	check("truncated JSON flagged ok=false", truncated.ok === false);
-	check("truncated salvages first complete object", truncated.payload.entities?.length === 1);
-	check("salvaged object intact", truncated.payload.entities?.[0].label === "alpha");
-}
-
-// -- extractJsonObject: strip preamble -------------------------------------
-{
-	const j = extractJsonObject('Sure, here:\n{"entities":[]}\nDone.');
-	check("brace-bracket strips preamble", j === '{"entities":[]}');
-	check("no JSON returns null", extractJsonObject("no json here") === null);
-}
-
 // -- stripInjectedContext ---------------------------------------------------
 {
-	const s = stripInjectedContext("hello <kg-context>SECRET</kg-context> world");
-	check("kg-context block removed", !s.includes("kg-context") && !s.includes("SECRET"));
+	const s = stripInjectedContext("hello <memory>SECRET</memory> world");
+	check("memory block removed", !s.includes("memory") && !s.includes("SECRET"));
 	check("surrounding text preserved", s.includes("hello") && s.includes("world"));
 }
 
-// -- applyExtraction: orphan reject + link create + implicit endpoints -----
+// -- hasContentWords (thin-turn guard) -------------------------------------
 {
-	const g = Graph.empty();
-	const stats = applyExtraction(g, {
-		entities: [
-			{ label: "lisbon", type: "place", summary: "A city in Portugal." },
-			{ label: "brother", type: "person", summary: "The user's brother." },
-			{ label: "orphan-node", type: "concept", summary: "Referenced by nothing." },
-		],
-		relationships: [
-			{ subject: "user", predicate: "plans-trip-to", object: "lisbon", because: "a conference" },
-			{ subject: "user", predicate: "has", object: "brother" },
-		],
-		expirations: [],
-	});
-	check("orphan entity rejected", stats.rejectedOrphan === 1 && g.get("orphan-node") === null);
-	check("referenced entities added", stats.entitiesAdded === 2 && stats.newEntities === 2);
-	check("links created", stats.linksAdded === 2);
-	check("implicit endpoint node created", g.get("user") !== null);
-	check("relationship present", g.hasLink("user", "plans-trip-to", "lisbon"));
-	const link = g.findLink(g.get("user")!.id, "plans-trip-to", g.get("lisbon")!.id)!;
-	check("because clause attached", link.link_data!.clauses?.some((c) => c.type === "because") === true);
-
-	// Existing edge: a second payload with a `with` clause merges only (no new link).
-	const stats2 = applyExtraction(g, {
-		relationships: [
-			{ subject: "user", predicate: "plans-trip-to", object: "lisbon", with: "next spring" },
-		],
-	});
-	check("existing edge → clause merge only, no new link", stats2.linksAdded === 0 && stats2.clausesMerged === 1);
-	check("both clause types now present", link.link_data!.clauses?.length === 2);
-
-	// Expiration applies only when both endpoints exist.
-	const stats3 = applyExtraction(g, {
-		expirations: [{ subject: "user", predicate: "plans-trip-to", object: "lisbon", reason: "cancelled" }],
-	});
-	check("expiration applied", stats3.expirationsApplied === 1 && g.isExpired(link));
-	const statsNo = applyExtraction(g, {
-		expirations: [{ subject: "ghost", predicate: "uses", object: "phantom", reason: "n/a" }],
-	});
-	check("expiration on missing endpoints is a no-op", statsNo.expirationsApplied === 0);
+	check("thin turn has no content words", !hasContentWords("ok so"));
+	check("substantive turn has content words", hasContentWords("tell me about vector databases"));
 }
 
 // -- dumpExistingContext ----------------------------------------------------
 {
-	check("empty graph dump message", dumpExistingContext(Graph.empty()).includes("empty"));
+	check("empty memory dump message", dumpExistingContext(Graph.empty()).includes("empty"));
 	const g = Graph.empty();
-	g.getOrCreate("lisbon", 1, "A city in Portugal.", "place");
-	g.addLink("lisbon", "is-a", "city");
+	g.getOrCreate("lisbon", "A city in Portugal.", "place");
+	g.addAlias("lisbon", "lisboa");
 	const dump = dumpExistingContext(g);
-	check("dump lists the node", dump.includes("- lisbon (place)"));
-	check("dump lists active edge", dump.includes("--is-a--> city"));
+	check("dump lists the term", dump.includes("- lisbon (place)"));
+	check("dump lists aliases", dump.includes("aliases: lisboa"));
 }
 
-console.log(failures === 0 ? "\nAll ingestion tests passed." : `\n${failures} test(s) FAILED.`);
+// -- similarity: Jaro-Winkler + cosine + findSimilarTerms ------------------
+{
+	check("JW identical is 1", jaroWinkler("kubernetes", "kubernetes") === 1);
+	check("JW near-variant is high", jaroWinkler("kubernetes", "kubernete") > 0.9);
+	// The meaningful property: unrelated terms fall below the 0.87 dedup threshold
+	// (findSimilarTerms uses that gate), not that JW is near-zero.
+	check("JW unrelated is below the dedup threshold", jaroWinkler("postgres", "sqlite") < 0.87);
+	check("cosine identical is ~1", Math.abs(cosineSimilarity([1, 2, 3], [1, 2, 3]) - 1) < 1e-9);
+	check("cosine orthogonal is 0", cosineSimilarity([1, 0], [0, 1]) === 0);
+
+	const g = Graph.empty();
+	g.getOrCreate("kubernetes", "Container orchestration platform.");
+	g.getOrCreate("postgres", "Relational database.");
+	const hits = findSimilarTerms(g, "kubernetized", null);
+	check("string-similar term surfaces", hits.some((c) => c.term.label === "kubernetes"));
+	check("unrelated term does not surface", !hits.some((c) => c.term.label === "postgres"));
+	check("exact-label match is excluded (upsert, not dup)", findSimilarTerms(g, "kubernetes", null).every((c) => c.term.label !== "kubernetes"));
+}
+
+// -- STT lexicon: count + auto-replace --------------------------------------
+{
+	const lex = emptySttLexicon();
+	lex.mistranscriptions.push({ spoken: "swarm", transcribed: "storm", kind: "phonetic", ts: "t" });
+	lex.mistranscriptions.push({ spoken: "swarm", transcribed: "storm", kind: "phonetic", ts: "t2" });
+	check("mistranscription count tallies repeats", mistranscriptionCount(lex, "swarm", "storm") === 2);
+
+	const rules = [{ from: "kuber netties", to: "Kubernetes", ts: "t" }];
+	check("auto-replace rewrites the phrase", applyAutoReplace("deploying kuber netties now", rules) === "deploying Kubernetes now");
+	check("auto-replace is case-insensitive", applyAutoReplace("Kuber Netties rocks", rules) === "Kubernetes rocks");
+	check("auto-replace leaves unrelated text", applyAutoReplace("no match here", rules) === "no match here");
+}
+
+console.log(failures === 0 ? "\nAll pipeline-machinery tests passed." : `\n${failures} test(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);
