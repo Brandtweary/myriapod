@@ -196,8 +196,9 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     - **stem.ts** — Porter stemmer (opt-in) + always-on `depluralize()`.
     - **config.ts** · **types.ts** · **stopwords.ts** — tunables, shapes, NLTK stopword list.
 - **proxy/** — the metering backend (Bun, never bundled). `server.ts` (Hono app: `/anon-init`,
-  `/v1/chat/completions`, `/v1/web-search`, `/v1/embed`, `/redeem`, `/balance`, `/health`, `/voice/*`),
-  `db.ts` (`bun:sqlite`: principals / usage_log / family_codes / anon_ips), `openrouter.ts` (forward +
+  `/v1/chat/completions`, `/v1/web-search`, `/v1/embed`, `/redeem`, `/balance`, `/health`, `/voice/*`,
+  `/subscribe`), `db.ts` (`bun:sqlite`: principals / usage_log / family_codes / anon_ips / subscribers),
+  `openrouter.ts` (forward +
   meter; mint sub-keys), `anon.ts` (the grant gates), `voice-broker.ts` (the voice-session broker),
   `config.ts`, `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
   `proxy/.env` (gitignored); `.env.example` documents the shape.
@@ -283,7 +284,9 @@ The bundled example app is broken in all published versions; these are load-bear
   (`tsc --noEmit`). Dev tests: `npx tsx scripts/test-graph-mutation.ts` and `npx tsx scripts/test-ingest.ts`
   after any `src/kg/` change. Proxy: `cd proxy && bun run server.ts` (serve) / `bun test` (its suite).
 - **Endpoints are env-configured.** `VITE_PROXY_BASE` and `VITE_STT_BASE` / `VITE_TTS_BASE` default to
-  local/dev targets and are overridden at build time for deploy. On the proxy, `SEARXNG_BASE` and
+  local/dev targets and are overridden at build time for deploy. Optional voice overrides (for
+  self-hosters pointing at their own moshi/Whisper): `VITE_TTS_VOICE` / `VITE_TTS_AUTH` /
+  `VITE_TTS_CFG_ALPHA` / `VITE_STT_AUTH`, all with sane fallbacks. On the proxy, `SEARXNG_BASE` and
   `EMBED_BASE` point at the self-hosted backends. The own-key path always goes to OpenRouter direct.
 - **Versions are pinned** — the `@earendil-works/*` suite is locked at 0.75.3 (an `overrides` block
   forces it); upgrading emits the identical broken event set.

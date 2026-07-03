@@ -87,6 +87,9 @@ The stock system prompt (`VOICE_SYSTEM_PROMPT` in `src/main.ts`) is written for 
 down to the model and voice it names. If you run your own, rewrite it to fit — a local home agent,
 say, may want the hardware awareness the hosted prompt has no use for.
 
+Full setup — env vars, the metering proxy, the voice servers, and a one-box reverse proxy with TLS —
+is in [`docs/self-hosting.md`](./docs/self-hosting.md).
+
 ## Stack
 
 TypeScript on [`@earendil-works/pi-web-ui`](https://www.npmjs.com/package/@earendil-works/pi-web-ui)

@@ -46,7 +46,7 @@ function debugLogPlugin(): Plugin {
 function cspPlugin(): Plugin {
 	const originOf = (u: string) => new URL(u).origin;
 	const proxyOrigin = originOf(process.env.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1");
-	const sttOrigin = originOf(process.env.VITE_STT_BASE ?? "ws://localhost:8123/api/asr-streaming");
+	const sttOrigin = originOf(process.env.VITE_STT_BASE ?? "http://localhost:8123/api/asr-http");
 	const ttsOrigin = originOf(process.env.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming");
 	const connect = [...new Set(["'self'", "https://openrouter.ai", proxyOrigin, sttOrigin, ttsOrigin])].join(" ");
 	const csp = [

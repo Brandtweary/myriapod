@@ -26,6 +26,11 @@ import { dbg, dbgWarn } from "./debug.js";
 const DEFAULT_STT_URL =
 	import.meta.env.VITE_STT_BASE ?? "http://localhost:8123/api/asr-http";
 
+// Optional bearer token for an auth-gated Whisper endpoint. Our faster-whisper has
+// none (undefined ⇒ no Authorization header); a self-hoster fronting Whisper with
+// auth sets VITE_STT_AUTH.
+const DEFAULT_STT_AUTH: string | undefined = import.meta.env.VITE_STT_AUTH;
+
 // The recorder emits 24kHz f32 mono PCM (PART 1 resamples to this rate).
 const STT_SAMPLE_RATE = 24000;
 // Whisper expects 16kHz mono 16-bit PCM; we resample down before encoding the WAV.
@@ -38,6 +43,8 @@ const TRANSCRIBE_TIMEOUT_MS = 30_000;
 export interface SttClientOptions {
 	// The ASR HTTP endpoint. Defaults to VITE_STT_BASE.
 	url?: string;
+	// Optional bearer token for an auth-gated endpoint. Defaults to VITE_STT_AUTH.
+	auth?: string;
 }
 
 /**
@@ -50,9 +57,11 @@ export interface SttClientOptions {
  */
 export class WhisperClient {
 	private readonly url: string;
+	private readonly auth: string | undefined;
 
 	constructor(opts: SttClientOptions = {}) {
 		this.url = opts.url ?? DEFAULT_STT_URL;
+		this.auth = opts.auth ?? DEFAULT_STT_AUTH;
 	}
 
 	/** No-op — HTTP is stateless (no socket to open). */
@@ -81,6 +90,7 @@ export class WhisperClient {
 		const res = await fetch(this.url, {
 			method: "POST",
 			body: form,
+			headers: this.auth ? { Authorization: `Bearer ${this.auth}` } : undefined,
 			signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS),
 		});
 		if (!res.ok) {

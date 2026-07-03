@@ -180,15 +180,18 @@ const ENV = (import.meta as unknown as { env?: Record<string, string> }).env ?? 
 // Dev default points at a local moshi-server. Deploy overrides via VITE_TTS_BASE
 // (a wss:// URL on the public host).
 const DEFAULT_TTS_BASE = ENV.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming";
-// The "developer-1" (Václav Volhejn) voice — the male voice.
-const DEFAULT_VOICE = "unmute-prod-website/developer-1.mp3";
-const DEFAULT_CFG_ALPHA = 1.5;
+// The moshi voice id (a path_on_server). Override with VITE_TTS_VOICE to select a
+// voice your own moshi-server has; the default is the stock "developer-1" male voice.
+const DEFAULT_VOICE = ENV.VITE_TTS_VOICE ?? "unmute-prod-website/developer-1.mp3";
+// Classifier-free-guidance strength. Override with VITE_TTS_CFG_ALPHA.
+const DEFAULT_CFG_ALPHA = ENV.VITE_TTS_CFG_ALPHA ? Number(ENV.VITE_TTS_CFG_ALPHA) : 1.5;
 
 // AUTH: moshi reads the token from the `auth_id` query param when no kyutai-api-key
 // header is present; a browser WS can't set headers, so auth_id is the path. Verified
 // against moshi-server main.rs (`PyStreamingQuery { auth_id, format, voice }` backs the
-// /api/tts_streaming Py module). tts.toml authorized_ids = ["public_token"].
-const DEFAULT_API_KEY = "public_token";
+// /api/tts_streaming Py module). Override with VITE_TTS_AUTH to match your moshi's
+// authorized_ids; the default is the conventional demo token.
+const DEFAULT_API_KEY = ENV.VITE_TTS_AUTH ?? "public_token";
 
 // moshi streams PCM at 24 kHz (PcmMessagePack). The shared AudioContext is created at
 // this rate (see main.ts) so frames play without any resampling.

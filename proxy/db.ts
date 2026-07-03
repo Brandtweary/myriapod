@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS anon_ips (
   principal_id TEXT NOT NULL,
   created_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS subscribers (
+  email      TEXT PRIMARY KEY,
+  ip         TEXT,
+  created_at TEXT NOT NULL
+);
 `;
 
 export class Db {
@@ -76,6 +81,8 @@ export class Db {
 	private sReleaseCode;
 	private sAnonForIp;
 	private sBindIp;
+	private sAddSubscriber;
+	private sListSubscribers;
 
 	constructor(path: string) {
 		this.db = new Database(path, { create: true });
@@ -150,6 +157,13 @@ export class Db {
 		this.sBindIp = this.db.query<unknown, [string, string, string]>(
 			"INSERT OR IGNORE INTO anon_ips (ip, principal_id, created_at) VALUES (?, ?, ?)",
 		);
+		this.sAddSubscriber = this.db.query<unknown, [string, string, string]>(
+			"INSERT OR IGNORE INTO subscribers (email, ip, created_at) VALUES (?, ?, ?)",
+		);
+		this.sListSubscribers = this.db.query<
+			{ email: string; ip: string | null; created_at: string },
+			[]
+		>("SELECT email, ip, created_at FROM subscribers ORDER BY created_at");
 	}
 
 	getPrincipal(id: string): Principal | null {
@@ -259,5 +273,17 @@ export class Db {
 
 	releaseCode(code: string): void {
 		this.sReleaseCode.run(code);
+	}
+
+	/** Record a feature-alert email signup. Idempotent on email (a re-submit no-ops).
+	 *  Returns true if the address was newly added. */
+	addSubscriber(email: string, ip: string): boolean {
+		const res = this.sAddSubscriber.run(email, ip, new Date().toISOString());
+		return res.changes === 1;
+	}
+
+	/** Every captured signup, oldest first (read by hand — no newsletter client). */
+	listSubscribers(): { email: string; ip: string | null; created_at: string }[] {
+		return this.sListSubscribers.all();
 	}
 }

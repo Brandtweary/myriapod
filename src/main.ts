@@ -1307,10 +1307,58 @@ const setView = (view: "chat" | "about") => {
 	renderHeader();
 };
 
+// Feature-alert email capture on the About page. Posts to the proxy's /subscribe
+// (a fire-and-forget list — no newsletter client) and updates the inline status text
+// imperatively, so the About view needs no reactive state.
+async function handleSubscribe(e: Event): Promise<void> {
+	e.preventDefault();
+	const form = e.currentTarget as HTMLFormElement;
+	const input = form.querySelector<HTMLInputElement>(".cw-signup-input");
+	const status = form.querySelector<HTMLElement>(".cw-signup-status");
+	const btn = form.querySelector<HTMLButtonElement>(".cw-signup-btn");
+	if (!input || !status || !btn) return;
+	const email = input.value.trim();
+	if (!email) return;
+	btn.disabled = true;
+	status.textContent = "…";
+	try {
+		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/subscribe`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ email }),
+		});
+		if (res.ok) {
+			status.textContent = "Thanks — you're on the list.";
+			input.value = "";
+		} else if (res.status === 429) {
+			status.textContent = "Too many tries — give it a minute.";
+			btn.disabled = false;
+		} else {
+			status.textContent = "That didn't look like a valid email.";
+			btn.disabled = false;
+		}
+	} catch {
+		status.textContent = "Couldn't reach the server — try again in a bit.";
+		btn.disabled = false;
+	}
+}
+
 const renderAbout = () => html`
 	<div class="flex-1 overflow-y-auto">
 		<div class="cw-about max-w-2xl mx-auto px-6 py-10">
 			${unsafeHTML(marked.parse(aboutDoc) as string)}
+			<form class="cw-signup" @submit=${handleSubscribe}>
+				<input
+					class="cw-signup-input"
+					type="email"
+					name="email"
+					required
+					placeholder="you@example.com"
+					aria-label="Email for feature-release alerts"
+				/>
+				<button class="cw-signup-btn" type="submit">Notify me</button>
+				<span class="cw-signup-status" role="status" aria-live="polite"></span>
+			</form>
 		</div>
 	</div>
 `;

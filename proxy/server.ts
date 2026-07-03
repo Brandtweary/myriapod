@@ -176,6 +176,26 @@ function embedRateLimited(ip: string): boolean {
 	return hits.length > EMBED_MAX;
 }
 
+// In-memory per-IP sliding-window rate limit for the email-signup form. A public
+// endpoint (anyone can submit), so this is the only guard; not money, not metered.
+const SUBSCRIBE_WINDOW_MS = 60_000;
+const SUBSCRIBE_MAX = 5; // it's a single form submit — a handful a minute is plenty
+const subscribeHits = new Map<string, number[]>();
+function subscribeRateLimited(ip: string): boolean {
+	const now = Date.now();
+	const cutoff = now - SUBSCRIBE_WINDOW_MS;
+	const hits = (subscribeHits.get(ip) ?? []).filter((t) => t > cutoff);
+	hits.push(now);
+	subscribeHits.set(ip, hits);
+	return hits.length > SUBSCRIBE_MAX;
+}
+
+// A deliberately-loose email shape check — reject obvious garbage and bound the
+// stored string; real deliverability isn't proven here (low-volume list, read by
+// hand). RFC-5322 is not the goal.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_MAX_CHARS = 254;
+
 // Per-IP brute-force guard for /redeem: a raw sliding-window cap PLUS an escalating
 // backoff that lengthens with each failed (unknown-code) attempt. Both maps are
 // in-memory + ephemeral and pruned by the periodic sweep below.
@@ -222,6 +242,7 @@ function pruneWindowMap(map: Map<string, number[]>, windowMs: number): void {
 const rateMapSweeper = setInterval(() => {
 	pruneWindowMap(webSearchHits, WEB_SEARCH_WINDOW_MS);
 	pruneWindowMap(embedHits, EMBED_WINDOW_MS);
+	pruneWindowMap(subscribeHits, SUBSCRIBE_WINDOW_MS);
 	pruneWindowMap(redeemHits, REDEEM_WINDOW_MS);
 	const now = Date.now();
 	for (const [ip, f] of redeemFailures) {
@@ -273,6 +294,27 @@ app.post("/v1/embed", async (c) => {
 	}
 	// text-embeddings-inference returns number[][] directly; pass it through.
 	return c.json((await res.json()) as number[][]);
+});
+
+// Feature-release email capture (About page). Open + rate-limited — a public form.
+// Stores the address in the subscribers table; there is no newsletter client, the
+// list is read by hand off the box. Idempotent on email (a re-submit is a no-op 200).
+app.post("/subscribe", async (c) => {
+	if (subscribeRateLimited(clientIp(c))) {
+		return c.json({ error: "rate limit — slow down" }, 429);
+	}
+	let body: { email?: unknown };
+	try {
+		body = (await c.req.json()) as { email?: unknown };
+	} catch {
+		return c.json({ error: "invalid JSON body" }, 400);
+	}
+	const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+	if (!email || email.length > EMAIL_MAX_CHARS || !EMAIL_RE.test(email)) {
+		return c.json({ error: "invalid email" }, 400);
+	}
+	db.addSubscriber(email, clientIp(c));
+	return c.json({ ok: true });
 });
 
 // Establish (or recover) an anonymous free-tier principal and return its token.

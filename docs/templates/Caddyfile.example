@@ -1,0 +1,63 @@
+# Myriapod one-box reverse proxy — sanitized Caddyfile.
+#
+# Serves the built SPA, proxies the metering-proxy API and the voice backends,
+# and auto-provisions HTTPS from Let's Encrypt. TLS is not optional: the mic
+# (getUserMedia) and the TTS wss:// both require a secure context.
+#
+# Replace your-domain.example with a real domain you control — Caddy will fetch
+# and renew its certificate automatically. Point the upstream addresses at
+# wherever your metering proxy and voice backends actually listen.
+
+your-domain.example {
+	# --- The metering proxy (API only) ---------------------------------------
+	# The proxy serves no static files — only these API routes. It listens on
+	# 127.0.0.1:8790. Caddy forwards X-Forwarded-For automatically, so set the
+	# proxy's TRUSTED_PROXY=127.0.0.1 to read the real visitor IP from it.
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /anon-init {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /redeem {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /balance {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /voice/* {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /health {
+		reverse_proxy 127.0.0.1:8790
+	}
+	handle /subscribe {
+		reverse_proxy 127.0.0.1:8790
+	}
+
+	# --- Speech-to-text (Whisper, HTTP) --------------------------------------
+	# VITE_STT_BASE points at /api/asr-http on this origin. A bare faster-whisper
+	# serves the OpenAI path /v1/audio/transcriptions, so rewrite to it before
+	# proxying. Upstream = your whisper container (8000 in the compose template).
+	handle /api/asr-http {
+		rewrite * /v1/audio/transcriptions
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# --- Text-to-speech (moshi, WebSocket) -----------------------------------
+	# moshi serves /api/tts_streaming natively — no rewrite. Caddy upgrades the
+	# WebSocket automatically. Upstream = your moshi container (8080).
+	handle /api/tts_streaming {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# --- The built SPA (catch-all) -------------------------------------------
+	# `npm run build` emits dist/. Everything not matched above serves the SPA,
+	# with a fallback so client-side routes resolve to index.html instead of 404.
+	# This block is LAST so the API and voice routes above take precedence.
+	handle {
+		root * /var/www/myriapod/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

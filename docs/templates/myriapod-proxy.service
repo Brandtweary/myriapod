@@ -1,0 +1,30 @@
+# Myriapod metering proxy — systemd unit template.
+#
+# Run the proxy under a supervisor in production so it restarts on crash — a bare
+# `bun run server.ts` has no auto-restart. Install as a user unit:
+#   cp myriapod-proxy.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now myriapod-proxy.service
+# (or place it in /etc/systemd/system for a system unit and set User=/paths).
+#
+# Fill in <install-dir> — the absolute path to the repo (its proxy/ subdir holds
+# server.ts and the gitignored .env).
+
+[Unit]
+Description=Myriapod metering proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=<install-dir>/proxy
+# systemd does NOT inherit your login shell's PATH. Use bun's absolute path (find
+# it with `which bun`); the common install location is ~/.bun/bin/bun.
+ExecStart=%h/.bun/bin/bun run server.ts
+Restart=on-failure
+RestartSec=2
+# Secrets (OpenRouter keys, caps) load from proxy/.env, which is gitignored and
+# read by the proxy at startup — no keys in this unit.
+
+[Install]
+WantedBy=default.target
