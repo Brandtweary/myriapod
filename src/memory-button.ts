@@ -66,12 +66,17 @@ export class MemoryButton {
 	}
 
 	// Re-home just before the mic button. Idempotent: no-op once we're its previous
-	// sibling. If the mic hasn't mounted yet, retry on the next mutation.
+	// sibling. If the mic hasn't mounted yet, retry on the next mutation. Once placed,
+	// narrow the observer from document.body to the mic's own cluster so we only re-run
+	// on cluster changes (re-homing) — not on every DOM mutation during a streamed reply.
 	private mount(): void {
 		const mic = document.querySelector(".cw-mic");
 		if (!mic || !mic.parentElement) return;
-		if (mic.previousElementSibling === this.host) return;
-		mic.parentElement.insertBefore(this.host, mic);
+		if (mic.previousElementSibling !== this.host) {
+			mic.parentElement.insertBefore(this.host, mic);
+		}
+		this.observer?.disconnect();
+		this.observer?.observe(mic.parentElement, { childList: true });
 	}
 
 	// Re-render from the current visual state. Called by the host when pipeline or

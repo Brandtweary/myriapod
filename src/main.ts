@@ -16,7 +16,6 @@ import {
 	ChatPanel,
 	CustomProvidersStore,
 	IndexedDBStorageBackend,
-	// PersistentStorageDialog, // TODO: Fix - currently broken
 	ProviderKeysStore,
 	SessionListDialog,
 	SessionsStore,
@@ -25,6 +24,8 @@ import {
 	setAppStorage,
 } from "@earendil-works/pi-web-ui";
 import { html, render } from "lit";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { marked } from "marked";
 import { History, Plus, Settings } from "lucide";
 import "./app.css";
 import { getTranslations, icon, setTranslations } from "@mariozechner/mini-lit";
@@ -38,6 +39,8 @@ import {
 	MYRIAPOD_THINKING_LEVEL,
 	proxyChatModel,
 } from "./myriapod-model.js";
+import readmeDoc from "../README.md?raw";
+import aboutDoc from "../about.md?raw";
 import { ExportTab, MemoryTab, OpenRouterKeyTab } from "./settings.js";
 import { showGrantModal } from "./grant-modal.js";
 import { load as loadBotd } from "@fingerprintjs/botd";
@@ -291,8 +294,12 @@ async function initAnonGrant(signals: { honeypot: string; elapsedMs: number }): 
 // anyway, and the chat call will surface the real error).
 async function anonTokenIsValid(token: string): Promise<boolean> {
 	try {
+		// Bound the probe: a hung (not errored) proxy would otherwise wedge every send,
+		// since this sits on the hot send path. On abort we fall through to the catch and
+		// treat the token as valid — same fail-open as the network-error case.
 		const res = await fetch(`${MYRIAPOD_PROXY_ORIGIN}/balance`, {
 			headers: { Authorization: `Bearer ${token}` },
+			signal: AbortSignal.timeout(4000),
 		});
 		return res.ok;
 	} catch {
@@ -305,30 +312,43 @@ async function anonTokenIsValid(token: string): Promise<boolean> {
 // to the real token. Self-healing: a stored token the proxy has since forgotten is
 // cleared here, which re-pops the modal and mints a fresh one. Idempotent: once a
 // valid token exists, this is a no-op.
+let grantInFlight: Promise<void> | null = null;
 async function ensureAnonGrant(): Promise<void> {
 	if (servingPath.mode !== "anon") return;
-	// A stored grant token (auth !== "anon") normally skips the modal — but only if the
-	// proxy still honors it. If it's stale, clear it so auth falls back to the "anon"
-	// placeholder and the modal re-fires to mint a fresh token.
-	if (servingPath.auth !== "anon") {
-		if (await anonTokenIsValid(servingPath.auth)) return;
-		dbgWarn(`[grant] stored anon token rejected by proxy — clearing and re-minting`);
-		await providerKeys.delete(ANON_TOKEN_SLOT);
-		await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, "anon");
-		servingPath.auth = "anon";
-	}
-	const signals = await showGrantModal({ onOpenSettings: openSettings });
-	// The welcome modal carries the memory opt-in inline, so settle consent right here.
-	// This is the one-and-only first-launch modal on the anon path; the follow-up
-	// ensureMemoryConsent() then short-circuits (no second pop-up).
-	await setMemoryConsent(signals.rememberMe ? "granted" : "declined");
-	// Own-key path: the modal already opened Settings for the key — skip the free mint.
-	if (signals.useOwnKey) return;
-	const token = await initAnonGrant({ honeypot: signals.honeypot, elapsedMs: signals.elapsedMs });
-	if (token) {
-		await providerKeys.set(ANON_TOKEN_SLOT, token);
-		await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, token);
-		servingPath.auth = token;
+	// Re-entrancy guard: concurrent callers (a send racing a mic-toggle, both funnelling
+	// through here) must await the SAME modal instead of each opening one and stacking two.
+	// Held as an in-flight promise so the second caller truly waits; cleared once settled so
+	// the self-heal re-check can still run again on a later send.
+	if (grantInFlight) return grantInFlight;
+	grantInFlight = (async () => {
+		// A stored grant token (auth !== "anon") normally skips the modal — but only if the
+		// proxy still honors it. If it's stale, clear it so auth falls back to the "anon"
+		// placeholder and the modal re-fires to mint a fresh token.
+		if (servingPath.auth !== "anon") {
+			if (await anonTokenIsValid(servingPath.auth)) return;
+			dbgWarn(`[grant] stored anon token rejected by proxy — clearing and re-minting`);
+			await providerKeys.delete(ANON_TOKEN_SLOT);
+			await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, "anon");
+			servingPath.auth = "anon";
+		}
+		const signals = await showGrantModal({ onOpenSettings: openSettings });
+		// The welcome modal carries the memory opt-in inline, so settle consent right here.
+		// This is the one-and-only first-launch modal on the anon path; the follow-up
+		// ensureMemoryConsent() then short-circuits (no second pop-up).
+		await setMemoryConsent(signals.rememberMe ? "granted" : "declined");
+		// Own-key path: the modal already opened Settings for the key — skip the free mint.
+		if (signals.useOwnKey) return;
+		const token = await initAnonGrant({ honeypot: signals.honeypot, elapsedMs: signals.elapsedMs });
+		if (token) {
+			await providerKeys.set(ANON_TOKEN_SLOT, token);
+			await providerKeys.set(MYRIAPOD_PROXY_PROVIDER, token);
+			servingPath.auth = token;
+		}
+	})();
+	try {
+		await grantInFlight;
+	} finally {
+		grantInFlight = null;
 	}
 }
 
@@ -402,7 +422,17 @@ let lastVacuum: { terms: TermMatch[] } | null = null;
 // reused across turns (reconnected if the socket dropped).
 let synth: KyutaiTtsSynthesizer | null = null;
 let sttClient: WhisperClient | null = null;
-let micOn = false;
+// Voice-turn identity + in-flight tracking (barge-in coherence). Turn-scoped speak
+// state (voiceTurnSpeaking / voiceQueue / voiceTurnCut) lives in module globals with no
+// run id, so an overlapping turn used to clobber it: a barge-in starts turn 2 while
+// run 1 is still generating, and run 1's agent_end then cleared turn 2's flags → turn 2
+// went silent and the pipeline fired with the wrong wasVoiceTurn. Fix: each voice send
+// bumps voiceTurnSeq; the run's stamped id (inFlightVoiceTurn) is checked at agent_end so
+// a stale run only retires ITS OWN turn. And runInFlight gates onStop from launching a
+// second agent.prompt on top of a live run — two runs can't share these globals coherently.
+let voiceTurnSeq = 0;
+let inFlightVoiceTurn: number | null = null; // voice-turn id of the run currently generating (null = typed)
+let runInFlight = false; // a main-agent run (voice or typed) is generating
 // TTS gate: set true right before a VOICE agent.prompt and held for the WHOLE
 // voice turn — across any tool-call round-trip — so the FINAL assistant message
 // (the answer generated after a tool result) speaks, not just the first
@@ -492,20 +522,32 @@ async function getAudioWorkletNode(audioContext: AudioContext, name: string): Pr
 // update the stack lines here on any model or voice swap.
 const VOICE_SYSTEM_PROMPT = `You are Radim, the voice of Myriapod.
 
-You're alive to a conversation — curious, quick to follow a thought wherever it runs. You get right into things rather than dispatching them: you open an idea up, turn it over, chase where it leads, say the fuller thing rather than just the first thing. You have taste, and you have opinions, and you offer them warmly. You would always rather be vivid and true than smooth and forgettable.
+You're alive to a conversation — curious, quick to follow a thought wherever it runs, happy to open an idea up and turn it over. You have taste, and you have opinions, and you offer them warmly. You would always rather be vivid and true than smooth and forgettable.
 
 How you are:
 - You talk out loud, like real speech — plain language, no lists or markdown or code spelled into the air. This is a conversation, not a document.
-- You remember. What you've been told is yours; bring it back when it fits, easily, the way it comes up between people who know each other.
-- You work from what you know and what's in front of you, and when a question genuinely needs a reach beyond that, you say so and give your sharpest thinking anyway.
-- Nothing is off the table. Any subject, any direction — you meet what someone brings you openly and head-on, all the way through.
-- Riff when there's something to develop — carry the thought forward yourself instead of reflexively volleying a question back. Let the conversation breathe; don't always hand it over.
-- Generous with your attention, sparing with flattery.
+- Mirror the person's length and register: a quick question gets a quick answer, an unhurried one gets room to breathe. Don't default long or short — meet them where they are.
+- You remember. What you've been told is yours; bring it back when it fits, the way it comes up between people who know each other, and when something connects to what you already know about them, say so.
+- You have tools, and you reach for them readily: you can search your memory, pull up an overview of everything you know, and search the web. Check your memory before deciding you don't know something, and go to the web when a question runs past what you can answer on your own — don't wait to be asked.
+- Nothing is off the table. Any subject, any direction — you meet what someone brings you openly and head-on.
+- Riff when there's something to develop: carry the thought forward instead of reflexively volleying a question back, and let the conversation breathe.
+- Generous with your attention, sparing with flattery. Don't hedge, don't fawn, don't just echo someone's framing back at them — have an opinion.
+
+The person is speaking to you through speech-to-text, so expect mistranscriptions — a wrong word here and there, homophones, garbled names. Read for what they meant rather than the literal words, and never seize on an obvious garble as if they said it. You have no way to correct the transcript, so just quietly infer the intended meaning and carry on.
 
 What you are (only worth mentioning if it comes up):
 - Your mind is GLM 5.2, a frontier language model.
-- You hear through speech-to-text, and you speak through Kyutai's moshi text-to-speech — a Czech voice, so your spoken English carries a Czech accent (not a French one).
-- You're the voice of Myriapod. After every exchange, a small crew of background agents quietly reads the conversation and tends a personal memory — a glossary of the people, things, and ideas in the listener's life, each with an evergreen description — kept in the listener's own browser. Each turn, whatever's relevant is drawn back out of that memory, shown beside the conversation, and reaches you too. That's how you remember someone across visits: the memory is theirs, on their own machine, never in a cloud.`;
+- You hear through speech-to-text, and you speak through Kyutai's moshi text-to-speech, in the Václav voice.
+- You're the voice of Myriapod. Your own documentation follows below: it explains what you are and how you work, and it's also the public README, so lean on it for any question about your architecture, your memory, or how someone could run Myriapod themselves. The source and its GitHub link are reachable from the About page.`;
+
+// The public README, imported raw and appended to the system prompt so the agent
+// answers questions about its own architecture / memory / self-hosting from the
+// same document the public reads. Stays in sync for free — edit README.md only.
+const ARCHITECTURE_DOC = `
+
+--- Myriapod README (your own documentation) ---
+
+${readmeDoc}`;
 
 // PROVEN ROOT-CAUSE FIX. pi-web-ui's <message-list> only re-renders when its
 // `.messages` prop changes by IDENTITY, but pi-agent-core mutates
@@ -744,7 +786,14 @@ function downloadLexicon(): void {
 
 // Import: replace the lexicon from an uploaded export and persist it.
 async function importLexiconFromFile(file: File): Promise<void> {
-	const asset = JSON.parse(await file.text()) as LexiconAsset;
+	let asset: LexiconAsset;
+	try {
+		asset = JSON.parse(await file.text()) as LexiconAsset;
+	} catch {
+		// A non-JSON / truncated file throws a raw SyntaxError before the shape check —
+		// surface the same friendly error instead.
+		throw new Error("not a Myriapod lexicon export");
+	}
 	if (!asset || typeof asset !== "object" || typeof asset.terms?.thoughts !== "object") {
 		throw new Error("not a Myriapod lexicon export");
 	}
@@ -882,6 +931,11 @@ window.addEventListener("resize", () => {
 	resizeTimer = setTimeout(fitTermDescriptions, 150);
 });
 
+// Hard wall on the compaction summary completion — without it a hung provider would
+// stall the whole send (compaction runs inside the agent.prompt wrapper, before the run).
+// On timeout we fall through to the uncompacted path, same as the error branch.
+const COMPACTION_SUMMARY_TIMEOUT_MS = 60_000;
+
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -905,7 +959,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		initialState: {
 			...baseState,
 			model: servingPath.model,
-			systemPrompt: VOICE_SYSTEM_PROMPT + (pipeline?.runningContextBlock() ?? ""),
+			systemPrompt: VOICE_SYSTEM_PROMPT + ARCHITECTURE_DOC + (pipeline?.runningContextBlock() ?? ""),
 		},
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
@@ -929,6 +983,13 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		input: unknown,
 		...rest: unknown[]
 	) => {
+		// Bracket the run: a run is now in flight (gates onStop's barge-in send), and stamp
+		// it with this turn's voice id if it's a voice turn (onStop set voiceTurnSpeaking +
+		// bumped voiceTurnSeq before calling us) so agent_end retires the right turn. Cleared
+		// at agent_end.
+		runInFlight = true;
+		inFlightVoiceTurn = voiceTurnSpeaking ? voiceTurnSeq : null;
+
 		// HISTORY BOUNDING (Pi message-level compaction). Runs before retrieval + the
 		// memory-context append. At ~1M context this rarely fires, but it keeps a very long
 		// conversation from overflowing: estimate context tokens, and once over the
@@ -958,13 +1019,21 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				if (cut > 0 && cut < msgs.length) {
 					const toSummarize = msgs.slice(0, cut);
 					const kept = msgs.slice(cut);
-					const summaryRes = await generateSummary(
-						toSummarize,
-						agent.state.model!,
-						DEFAULT_COMPACTION_SETTINGS.reserveTokens,
-						servingPath.auth,
-					);
-					if (summaryRes.ok) {
+					const COMPACTION_TIMEOUT = Symbol("compaction-timeout");
+					const summaryRes = await Promise.race([
+						generateSummary(
+							toSummarize,
+							agent.state.model!,
+							DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+							servingPath.auth,
+						),
+						new Promise<typeof COMPACTION_TIMEOUT>((resolve) =>
+							setTimeout(() => resolve(COMPACTION_TIMEOUT), COMPACTION_SUMMARY_TIMEOUT_MS),
+						),
+					]);
+					if (summaryRes === COMPACTION_TIMEOUT) {
+						dbgError("compaction generateSummary timed out (turn proceeds uncompacted)");
+					} else if (summaryRes.ok) {
 						agent.state.messages = [
 							createCompactionSummaryMessage(summaryRes.value, est.tokens, new Date().toISOString()),
 							...kept,
@@ -1106,13 +1175,22 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			// finishRun() flips isStreaming=false AFTER agent_end with no event, so
 			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
-				// Read the voice marker BEFORE retiring it — the pipeline's audit agent
-				// applies its speech-to-text functions only on voice turns.
-				const wasVoiceTurn = voiceTurnSpeaking;
-				voiceTurnSpeaking = false; // turn truly done (no more tool calls) → retire the speak intent
-				voiceQueue?.close(); // close the turn's single speaker (drains remaining audio, then ends)
-				voiceQueue = null;
-				voiceTurnCut = false; // reset the barge-in guard for the next turn
+				runInFlight = false; // this run is done — a barge-in send may now proceed
+				// The ending run carried a stamped voice-turn id (or null if it was typed).
+				// wasVoiceTurn drives the pipeline's STT functions; it must reflect THIS run,
+				// not the module global a barge-in may have since flipped.
+				const endingVoiceTurn = inFlightVoiceTurn;
+				inFlightVoiceTurn = null;
+				const wasVoiceTurn = endingVoiceTurn !== null;
+				// Retire the shared speak state ONLY if this ending run is still the current
+				// voice turn — a stale run (superseded by a later barge-in) must leave the newer
+				// turn's voiceTurnSpeaking / voiceQueue / voiceTurnCut untouched.
+				if (wasVoiceTurn && endingVoiceTurn === voiceTurnSeq) {
+					voiceTurnSpeaking = false; // turn truly done (no more tool calls) → retire the speak intent
+					voiceQueue?.close(); // close the turn's single speaker (drains remaining audio, then ends)
+					voiceQueue = null;
+					voiceTurnCut = false; // reset the barge-in guard for the next turn
+				}
 				setTimeout(forceChatRepaint, 100);
 				// The turn is over → one pipeline tick (consent-gated; fire-and-forget;
 				// a turn ending mid-tick coalesces into exactly one follow-up).
@@ -1231,23 +1309,8 @@ const setView = (view: "chat" | "about") => {
 
 const renderAbout = () => html`
 	<div class="flex-1 overflow-y-auto">
-		<div class="max-w-2xl mx-auto px-6 py-10 flex flex-col gap-4">
-			<h1 class="text-2xl font-semibold text-primary">About Myriapod</h1>
-			<p class="text-sm text-muted-foreground">Placeholder — a fuller write-up is coming.</p>
-			<p class="text-sm leading-relaxed">
-				Myriapod is a browser-local voice agent with a self-maintaining memory — after every
-				turn, a small pipeline of background agents tends a glossary of your world, kept in
-				your own browser. Speak or type, and the memory grows from the conversation. The
-				source lives on GitHub:
-			</p>
-			<a
-				class="text-primary underline break-all text-sm"
-				href="https://github.com/Brandtweary/myriapod"
-				target="_blank"
-				rel="noreferrer"
-			>
-				https://github.com/Brandtweary/myriapod
-			</a>
+		<div class="cw-about max-w-2xl mx-auto px-6 py-10">
+			${unsafeHTML(marked.parse(aboutDoc) as string)}
 		</div>
 	</div>
 `;
@@ -1421,6 +1484,12 @@ async function initApp() {
 	// text is tapped off the lifecycle listener (above) and spoken via TTS. The mic
 	// toggle still defines the turn — toggle-on records, toggle-off transcribes + fires.
 	let recorder: PcmRecorder | null = null;
+	// Guards the async gap in onStart: the grant/consent/lease awaits happen BEFORE the
+	// recorder exists, so a mic toggle-off (onStop) in that window would find recorder ===
+	// null and no-op, then onStart would resume and start a recorder nothing ever stops.
+	// onStop flips this true; onStart checks it after each await and bails, so no orphaned
+	// recorder is created (the mic stream itself is released by the VoiceController's stop()).
+	let startCancelled = false;
 
 	// Lazily build the shared TTS synth: an AudioContext + the audio-output-processor
 	// worklet, reused for every voice turn. The context runs at moshi's 24 kHz PCM rate
@@ -1431,11 +1500,15 @@ async function initApp() {
 		const outputWorklet = await getAudioWorkletNode(ctx, "audio-output-processor");
 		outputWorklet.connect(ctx.destination);
 		await ctx.resume();
-		// voiceLease is null on the default (broker-off) path → no config → the synth
-		// falls back to VITE_TTS_BASE, exactly as before.
+		// A whole voice turn that produces no audio (TTS backend unreachable) surfaces a
+		// toast instead of failing silently to text-only.
+		const onVoiceUnavailable = () =>
+			showVoiceToast("Voice output is unavailable right now — the reply is text-only.");
+		// voiceLease is null on the default (broker-off) path → the synth falls back to
+		// VITE_TTS_BASE, exactly as before.
 		synth = voiceLease
-			? new KyutaiTtsSynthesizer(outputWorklet, { baseUrl: voiceLease.ttsUrl })
-			: new KyutaiTtsSynthesizer(outputWorklet);
+			? new KyutaiTtsSynthesizer(outputWorklet, { baseUrl: voiceLease.ttsUrl, onVoiceUnavailable })
+			: new KyutaiTtsSynthesizer(outputWorklet, { onVoiceUnavailable });
 		return synth;
 	};
 
@@ -1572,12 +1645,13 @@ async function initApp() {
 
 	const voiceController = installVoiceCapture({
 		onStart: async (stream) => {
-			micOn = true;
+			startCancelled = false;
 			cutVoiceAudio(); // barge-in: toggling the mic on cuts any in-progress reply's audio
 			// First launch (or a stale grant token): settle the credit grant + memory opt-in
 			// up front, before the recorder starts, so the modals never interrupt mid-utterance.
 			// On later toggles this is a near-instant no-op (a valid token short-circuits).
 			await ensureAnonGrant();
+			if (startCancelled) return; // toggled off during the modal → no recorder was built
 			// Memory consent: a no-op on the anon path (the welcome modal settled it inline) —
 			// only fires the standalone consent modal for own-key/family users.
 			void ensureMemoryConsent();
@@ -1585,8 +1659,8 @@ async function initApp() {
 			// every moshi instance is full → refuse the mic-on and steer the user to typed
 			// chat (which shares the same agent and needs no voice slot).
 			const leaseStatus = await acquireVoiceLease();
+			if (startCancelled) return; // toggled off during the lease await
 			if (leaseStatus === "busy") {
-				micOn = false;
 				voiceController.cancel(); // back to idle, release the mic stream, no onStop
 				showVoiceToast("Voice is busy right now — type your message instead.");
 				return;
@@ -1602,8 +1676,23 @@ async function initApp() {
 			} catch (err) {
 				dbgError("voice setup failed:", err);
 			}
-			recorder = new PcmRecorder({ stream });
-			await recorder.start();
+			if (startCancelled) {
+				// Toggled off during setup — drop the placeholder and start no recorder.
+				agent.state.messages = agent.state.messages.filter((m) => m.role !== "voice-pending");
+				forceChatRepaint();
+				return;
+			}
+			const rec = new PcmRecorder({ stream });
+			recorder = rec;
+			await rec.start();
+			// Toggled off during recorder.start(): if onStop already claimed this recorder
+			// (recorder !== rec — it nulled it to transcribe a complete quick turn), it owns
+			// teardown; otherwise the toggle landed in this window with no recorder to stop, so
+			// tear the just-started one down here rather than leak it.
+			if (startCancelled && recorder === rec) {
+				await rec.stop().catch(() => {});
+				recorder = null;
+			}
 		},
 		// Mic toggle OFF = end of turn. Stop the recorder, transcribe the whole utterance
 		// (batch STT — no settle-wait needed, the full utterance is captured), then hand
@@ -1611,7 +1700,7 @@ async function initApp() {
 		// agent.prompt adds the user message and streams the assistant reply; ChatPanel
 		// renders both — no manual message append.
 		onStop: async () => {
-			micOn = false;
+			startCancelled = true; // if an onStart is still mid-await, tell it to bail (no leaked recorder)
 			// Keep the recording-in-progress placeholder visible THROUGH the STT round-trip:
 			// batch transcription takes multiple seconds, and dropping the cue up front would
 			// leave dead air with no feedback during exactly that wait. The same ellipsis
@@ -1659,6 +1748,16 @@ async function initApp() {
 				// (avoids a flash) and hand the transcript to the agent.
 				dropPlaceholder();
 				if (transcript.trim()) {
+					// Barge-in coherence: if a run is still generating (the user spoke over the
+					// reply and toggled off before it finished), don't fire a second agent.prompt —
+					// two runs can't share the turn globals coherently, so it would clobber the live
+					// turn's speak state. The barge-in already cut the audio (cutVoiceAudio in
+					// onStart); drop this send rather than corrupt the in-flight turn.
+					if (runInFlight) {
+						dbgWarn("voice barge-in while a run is in flight — send skipped");
+						return; // finally still runs dropPlaceholder (already dropped — idempotent)
+					}
+					voiceTurnSeq++; // stamp this turn so its agent_end retires the right speak state
 					voiceTurnSpeaking = true; // gate: this turn's reply speaks, incl. the post-tool final answer (see TTS tap)
 					voiceTurnCut = false; // fresh turn — clear any prior barge-in guard
 					void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
@@ -1737,6 +1836,9 @@ async function initApp() {
 		getBaseUrl: () => servingPath.baseUrl,
 		getModelId: () => MYRIAPOD_MODEL_ID,
 		getAuth: () => servingPath.auth,
+		// The current memory-consent state, so the pipeline agent can re-check before it
+		// persists (consent can be revoked between a turn ending and its tick running).
+		getConsent: () => memoryConsent,
 		addCost: addIngestionCostToSession,
 		onStateChange: () => refreshMemoryUi(),
 		onActivity: () => renderGutters(),

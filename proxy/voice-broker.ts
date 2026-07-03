@@ -33,6 +33,9 @@ export interface VoiceBrokerConfig {
 	// once its last beat is older than 3x this (covers tabs that closed without a
 	// clean release).
 	heartbeatSec: number;
+	// Absolute lease lifetime (seconds). A lease older than this is reclaimed even if
+	// still heartbeating, so a slot can't be held forever. 0 → no absolute cap.
+	maxLeaseSec?: number;
 	// Injectable clock (ms) — tests drive the TTL sweeper through it.
 	now?: () => number;
 }
@@ -40,6 +43,7 @@ export interface VoiceBrokerConfig {
 interface Lease {
 	instanceIdx: number;
 	lastBeat: number;
+	createdAt: number;
 }
 
 export type LeaseResult =
@@ -67,13 +71,20 @@ export class VoiceBroker {
 		return this.cfg.heartbeatSec * 1000 * 3;
 	}
 
-	/** Reclaim leases whose last heartbeat is older than the TTL, and expire stale
-	 *  queue markers. Idempotent; called lazily at the head of every public op. */
+	private maxLeaseMs(): number {
+		return (this.cfg.maxLeaseSec ?? 0) * 1000;
+	}
+
+	/** Reclaim leases whose last heartbeat is older than the TTL OR whose absolute age
+	 *  exceeds the max-lease cap, and expire stale queue markers. Idempotent; called
+	 *  lazily at the head of every public op. */
 	sweep(): void {
 		const t = this.now();
 		const leaseCutoff = t - this.ttlMs();
+		const ageCap = this.maxLeaseMs();
 		for (const [id, l] of this.leases) {
-			if (l.lastBeat < leaseCutoff) {
+			const expired = l.lastBeat < leaseCutoff || (ageCap > 0 && t - l.createdAt >= ageCap);
+			if (expired) {
 				this.leases.delete(id);
 				this.active[l.instanceIdx]!--;
 			}
@@ -97,7 +108,8 @@ export class VoiceBroker {
 		}
 		const leaseId = randomBytes(16).toString("hex");
 		this.active[best]!++;
-		this.leases.set(leaseId, { instanceIdx: best, lastBeat: this.now() });
+		const t = this.now();
+		this.leases.set(leaseId, { instanceIdx: best, lastBeat: t, createdAt: t });
 		const inst = this.cfg.instances[best]!;
 		return {
 			granted: true,
@@ -138,13 +150,35 @@ export class VoiceBroker {
 }
 
 // --- HTTP wiring -------------------------------------------------------------
-// Registered on the shared Hono app by server.ts. Routes are intentionally NOT
-// principal-gated: a lease is concurrency state, not spend, and CORS already scopes
-// who can reach the proxy. (If abuse ever shows up, gate these the same way
-// /v1/web-search resolves a bearer.)
+// Registered on the shared Hono app by server.ts. Routes are NOT principal-gated (a
+// lease is concurrency state, not spend, and CORS scopes who can reach the proxy) but
+// /voice/lease IS per-IP rate-limited so a script can't drain every STT slot by
+// hammering the mint. The IP comes from server.ts's trust-aware resolver.
 
 import type { Hono } from "hono";
 import type { Context } from "hono";
+
+// Per-IP sliding-window limiter on /voice/lease. In-memory, ephemeral (a restart
+// resets it), and size-capped so a flood of distinct IPs can't grow it without bound.
+const LEASE_WINDOW_MS = 60_000;
+const LEASE_MAX = 30; // leases/min per IP — generous for a normal re-lease cadence
+const LEASE_MAP_CAP = 10_000;
+const leaseHits = new Map<string, number[]>();
+function leaseRateLimited(ip: string): boolean {
+	const now = Date.now();
+	const cutoff = now - LEASE_WINDOW_MS;
+	if (leaseHits.size > LEASE_MAP_CAP) {
+		for (const [k, v] of leaseHits) {
+			const live = v.filter((t) => t > cutoff);
+			if (live.length) leaseHits.set(k, live);
+			else leaseHits.delete(k);
+		}
+	}
+	const hits = (leaseHits.get(ip) ?? []).filter((t) => t > cutoff);
+	hits.push(now);
+	leaseHits.set(ip, hits);
+	return hits.length > LEASE_MAX;
+}
 
 /** Extract a leaseId from a request, tolerating navigator.sendBeacon — whose body
  *  may arrive as text/plain or a Blob, not JSON. Checks the query param first, then
@@ -163,8 +197,15 @@ async function leaseIdFrom(c: Context): Promise<string> {
 	return raw.trim();
 }
 
-export function registerVoiceRoutes(app: Hono, broker: VoiceBroker): void {
+export function registerVoiceRoutes(
+	app: Hono,
+	broker: VoiceBroker,
+	clientIp: (c: Context) => string,
+): void {
 	app.post("/voice/lease", (c) => {
+		if (leaseRateLimited(clientIp(c))) {
+			return c.json({ error: "rate limit — slow down" }, 429);
+		}
 		const r = broker.lease();
 		if (r.granted) {
 			return c.json({

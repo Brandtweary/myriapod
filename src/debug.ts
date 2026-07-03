@@ -39,16 +39,19 @@ function ship(level: string, args: unknown[]): void {
 }
 
 export function dbg(...args: unknown[]): void {
+	if (!import.meta.env?.DEV) return;
 	ORIG.log("%c[myriapod]", STYLE, ...args);
 	ship("LOG", args);
 }
 
 export function dbgWarn(...args: unknown[]): void {
+	if (!import.meta.env?.DEV) return;
 	ORIG.warn("%c[myriapod]", STYLE, ...args);
 	ship("WARN", args);
 }
 
 export function dbgError(...args: unknown[]): void {
+	if (!import.meta.env?.DEV) return;
 	ORIG.error("%c[myriapod]", STYLE, ...args);
 	ship("ERROR", args);
 }
@@ -101,6 +104,7 @@ const ms = () => Math.round(performance.now());
 // call time (not import time), and createAgent()/the first send happen well
 // after initApp() calls installInstrumentation(), so patching here is in time.
 export function installStreamTap(): void {
+	if (!import.meta.env?.DEV) return;
 	const origFetch = globalThis.fetch.bind(globalThis);
 	let reqSeq = 0;
 	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {

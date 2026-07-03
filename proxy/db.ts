@@ -68,6 +68,8 @@ export class Db {
 	private sCreatePrincipal;
 	private sInsertUsage;
 	private sDebit;
+	private sReserve;
+	private sCredit;
 	private sGetCode;
 	private sInsertCode;
 	private sClaimCode;
@@ -116,6 +118,14 @@ export class Db {
 		);
 		this.sDebit = this.db.query<unknown, [number, string]>(
 			"UPDATE principals SET credit_remaining = credit_remaining - ? WHERE id = ?",
+		);
+		// Atomic reservation: debit only if enough credit remains. The WHERE guard is
+		// what serializes concurrent requests — the DB, not a read-then-write in JS.
+		this.sReserve = this.db.query<unknown, [number, string, number]>(
+			"UPDATE principals SET credit_remaining = credit_remaining - ? WHERE id = ? AND credit_remaining >= ?",
+		);
+		this.sCredit = this.db.query<unknown, [number, string]>(
+			"UPDATE principals SET credit_remaining = credit_remaining + ? WHERE id = ?",
 		);
 		this.sGetCode = this.db.query<
 			{ code: string; redeemed_token: string | null },
@@ -191,13 +201,30 @@ export class Db {
 		);
 	}
 
-	/** Record a metered call and debit the principal's balance in one transaction. */
-	recordUsage(u: {
+	/** Atomically reserve `amount` of credit up front (before forwarding). Returns
+	 *  false when the principal lacks that much — the caller rejects the request. The
+	 *  reservation is later reconciled to the true cost via reconcileUsage(), or
+	 *  refunded via refundReservation() if the forward never bills. */
+	reserve(principalId: string, amount: number): boolean {
+		const res = this.sReserve.run(amount, principalId, amount);
+		return res.changes === 1;
+	}
+
+	/** Return a reservation to a principal's balance (upstream error — no real spend). */
+	refundReservation(principalId: string, amount: number): void {
+		this.sCredit.run(amount, principalId);
+	}
+
+	/** Record a metered call and reconcile its up-front reservation to the true cost in
+	 *  one transaction: log the real cost and adjust the balance by (cost - reserved),
+	 *  which refunds an over-reservation or debits an under-reservation. */
+	reconcileUsage(u: {
 		principalId: string;
 		model: string | null;
 		promptTokens: number;
 		completionTokens: number;
 		cost: number;
+		reserved: number;
 	}): void {
 		this.db.transaction(() => {
 			this.sInsertUsage.run(
@@ -208,7 +235,9 @@ export class Db {
 				u.completionTokens,
 				u.cost,
 			);
-			this.sDebit.run(u.cost, u.principalId);
+			// The reservation already subtracted `reserved`; settle to a net debit of
+			// `cost` by subtracting the remaining delta (negative → refund).
+			this.sDebit.run(u.cost - u.reserved, u.principalId);
 		})();
 	}
 

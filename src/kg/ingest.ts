@@ -12,7 +12,7 @@ export interface ChatMessage {
 	role: "system" | "user" | "assistant";
 	content: string;
 }
-export type CompletionFn = (messages: ChatMessage[]) => Promise<string>;
+export type CompletionFn = (messages: ChatMessage[], signal?: AbortSignal) => Promise<string>;
 
 export interface CompletionOpts {
 	baseUrl: string; // OpenAI-compatible base, e.g. http://.../llm/v1
@@ -33,7 +33,7 @@ export interface CompletionOpts {
  *  omitted → `reasoning: { enabled: false }` (thinking off). OpenRouter honors the
  *  field; endpoints that don't simply ignore it. */
 export function makeCompletion(opts: CompletionOpts): CompletionFn {
-	return async (messages) => {
+	return async (messages, signal) => {
 		const res = await fetch(`${opts.baseUrl}/chat/completions`, {
 			method: "POST",
 			headers: {
@@ -46,6 +46,7 @@ export function makeCompletion(opts: CompletionOpts): CompletionFn {
 				stream: false,
 				reasoning: opts.reasoningEffort ? { effort: opts.reasoningEffort } : { enabled: false },
 			}),
+			signal,
 		});
 		if (!res.ok) {
 			throw new Error(`completion failed: ${res.status} ${await res.text()}`);

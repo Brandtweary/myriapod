@@ -1,10 +1,9 @@
 import type { Model } from "@earendil-works/pi-ai";
 
 // One hardcoded chat model: GLM 5.2 (frontier) over OpenRouter. There is no model
-// picker — the audience never sees or chooses it. The same model serves BOTH typed
-// chat and personal-graph ingestion (ingestion is a scored extraction job; a cheaper
-// model for it — e.g. a small DeepSeek — is a documented later refinement, see the
-// taskpad; for V1 one model keeps the moving parts down).
+// picker — the audience never sees or chooses it. The same model serves BOTH the
+// chat agent and the three per-turn pipeline agents (audit/memory/summary); one
+// model keeps the moving parts down.
 //
 // Three serving paths reach it (resolved in main.ts: resolveServingPath):
 //   own-key → the visitor's own OpenRouter key, calling OpenRouter DIRECTLY (no proxy)

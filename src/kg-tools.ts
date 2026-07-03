@@ -47,7 +47,7 @@ export function createMemorySearchTool(getGraph: () => Graph): AgentTool<typeof 
 // memory_dump
 // ---------------------------------------------------------------------------
 function buildDump(graph: Graph, limit: number): { text: string; termCount: number } {
-	const cap = Math.min(Math.max(limit, 1), 500);
+	const cap = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 150;
 
 	// Rank terms by hit_count desc, tie-break last_fired desc.
 	const nodes: Thought[] = [...graph.thoughts.values()];

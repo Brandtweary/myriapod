@@ -56,13 +56,18 @@ export class StopAudioButton {
 
 	// Re-home just before the memory button → cluster [stop][memory][mic][send]. Falls
 	// back to before the mic if the memory button hasn't mounted yet (then re-homes
-	// once it has). Idempotent: no-op when already the anchor's previous sibling.
+	// once it has). Idempotent: no-op when already the anchor's previous sibling. Once
+	// placed, narrow the observer from document.body to the cluster container so we only
+	// re-run on cluster changes — not on every DOM mutation during a streamed reply.
 	private mount(): void {
 		const anchor =
 			document.querySelector(".cw-mem")?.parentElement ?? document.querySelector(".cw-mic");
 		if (!anchor || !anchor.parentElement) return;
-		if (anchor.previousElementSibling === this.host) return;
-		anchor.parentElement.insertBefore(this.host, anchor);
+		if (anchor.previousElementSibling !== this.host) {
+			anchor.parentElement.insertBefore(this.host, anchor);
+		}
+		this.observer?.disconnect();
+		this.observer?.observe(anchor.parentElement, { childList: true });
 	}
 
 	// Re-render from the current mute state. Called by the host after a toggle.

@@ -23,7 +23,7 @@ export function showConsentModal(): Promise<ConsentChoice> {
 		render(
 			html`
 				<div class="cw-modal" role="dialog" aria-modal="true" aria-labelledby="cw-consent-title">
-					<h2 id="cw-consent-title" class="cw-modal-title">Remember our conversations?</h2>
+					<h2 id="cw-consent-title" class="cw-modal-title">Remember conversations?</h2>
 					<p class="cw-modal-body">
 						Myriapod can build a small personal memory from what you tell it, so it keeps context
 						across turns and future visits. It lives <strong>only in this browser</strong> — never

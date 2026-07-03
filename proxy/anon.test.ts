@@ -8,6 +8,12 @@ import { test, expect, beforeAll } from "bun:test";
 
 process.env.DB_PATH = ":memory:";
 process.env.OWNER_OPENROUTER_KEY = "sk-test-owner";
+// Trust XFF from any peer so the in-process test harness (no real socket peer) can
+// drive distinct client IPs via the header — mirrors running behind a trusted proxy.
+process.env.TRUSTED_PROXY = "*";
+// A truthy provisioning key so /redeem gets past the "family tier not configured" 503
+// and reaches the rate-limit path (no sub-key is minted for the unknown codes tested).
+process.env.OPENROUTER_PROVISIONING_KEY = "sk-test-prov";
 
 let app: { request: (path: string, init?: RequestInit) => Promise<Response> };
 let db: { newIpGrantsToday(): number };
@@ -137,4 +143,38 @@ test("web-search per-IP rate limit → 429 once the window is exceeded", async (
 		}
 	}
 	expect(saw429).toBe(true);
+});
+
+function redeem(ip: string, code: string) {
+	return app.request("/redeem", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
+		body: JSON.stringify({ code }),
+	});
+}
+
+test("/redeem brute-force: an unknown code is 404, and the backoff 429s the next try", async () => {
+	const ip = "192.0.2.55";
+	const first = await redeem(ip, "NOPE-AAAAAA");
+	expect(first.status).toBe(404); // unknown code — failure noted
+	const second = await redeem(ip, "NOPE-BBBBBB");
+	expect(second.status).toBe(429); // escalating backoff engaged immediately
+});
+
+function embed(ip: string, inputs: unknown) {
+	return app.request("/v1/embed", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
+		body: JSON.stringify({ inputs }),
+	});
+}
+
+test("/v1/embed rejects too many inputs (400, before touching the backend)", async () => {
+	const res = await embed("192.0.2.60", Array.from({ length: 65 }, () => "x"));
+	expect(res.status).toBe(400);
+});
+
+test("/v1/embed rejects an over-long input string (400)", async () => {
+	const res = await embed("192.0.2.61", ["a".repeat(8193)]);
+	expect(res.status).toBe(400);
 });

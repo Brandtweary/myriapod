@@ -42,11 +42,14 @@ bun start                # http://0.0.0.0:8790
 ## Mint a family code
 
 ```sh
-bun run mint-code.ts AUNT-MAY-2026
+bun run mint-code.ts AUNT-MAY     # → e.g. AUNT-MAY-7F3KQ9
 ```
 
-Hand the code out; the recipient redeems it in the site's settings, which calls
-`/redeem` and stores the returned token in their browser.
+A random entropy segment is always appended (the memorable prefix is optional), so
+codes can't be enumerated. The script prints the full code — hand *that* out; the
+recipient redeems it in the site's settings, which calls `/redeem` and stores the
+returned token in their browser. `/redeem` is per-IP rate-limited with an escalating
+backoff on failed attempts.
 
 ## OpenRouter dashboard (one-time, by hand)
 

@@ -146,6 +146,7 @@ export class OpenRouterKeyTab extends SettingsTab {
 	@state() private keyValue = "";
 	@state() private codeValue = "";
 	@state() private balance: { tier: string; remaining: number; grant: number } | null = null;
+	@state() private busy = false;
 
 	constructor(private readonly cbs: OpenRouterKeyTabCallbacks) {
 		super();
@@ -163,19 +164,33 @@ export class OpenRouterKeyTab extends SettingsTab {
 
 	render(): TemplateResult {
 		const saveKey = async () => {
-			const key = this.keyValue.trim();
-			await this.cbs.onSaveKey(key);
-			alert(key ? "Key saved." : "Key removed — you're back on the free tier.");
+			if (this.busy) return;
+			this.busy = true;
+			try {
+				const key = this.keyValue.trim();
+				await this.cbs.onSaveKey(key);
+				alert(key ? "Key saved." : "Key removed — you're back on the free tier.");
+			} finally {
+				this.busy = false;
+			}
 		};
 		const redeem = async () => {
+			if (this.busy) return;
 			const code = this.codeValue.trim();
 			if (!code) return;
-			const res = await this.cbs.onRedeem(code);
-			if (res.ok) {
-				this.codeValue = "";
-				alert("Credit applied! Start a new chat to use it.");
-			} else {
-				alert(`Could not apply code: ${res.error ?? "unknown error"}`);
+			this.busy = true;
+			try {
+				const res = await this.cbs.onRedeem(code);
+				if (res.ok) {
+					this.codeValue = "";
+					// Refresh the readout — the captured balance is now stale post-redeem.
+					if (this.cbs.getBalance) this.balance = await this.cbs.getBalance();
+					alert("Credit applied! Start a new chat to use it.");
+				} else {
+					alert(`Could not apply code: ${res.error ?? "unknown error"}`);
+				}
+			} finally {
+				this.busy = false;
 			}
 		};
 		return html`
@@ -203,7 +218,8 @@ export class OpenRouterKeyTab extends SettingsTab {
 						},
 					})}
 					<button
-						class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80"
+						class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80 disabled:opacity-50"
+						?disabled=${this.busy}
 						@click=${saveKey}
 					>
 						Save
@@ -225,7 +241,8 @@ export class OpenRouterKeyTab extends SettingsTab {
 							},
 						})}
 						<button
-							class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80"
+							class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80 disabled:opacity-50"
+							?disabled=${this.busy}
 							@click=${redeem}
 						>
 							Apply
@@ -238,8 +255,10 @@ export class OpenRouterKeyTab extends SettingsTab {
 							<hr class="border-border" />
 							<p class="text-sm text-muted-foreground">
 								${this.balance.tier === "family" ? "Credit" : "Free credit"}:
-								<span class="text-primary">$${this.balance.remaining.toFixed(4)}</span>
-								of $${this.balance.grant.toFixed(2)} remaining
+								<span class="text-primary"
+									>$${Number.isFinite(this.balance.remaining) ? this.balance.remaining.toFixed(4) : "—"}</span
+								>
+								of $${Number.isFinite(this.balance.grant) ? this.balance.grant.toFixed(2) : "—"} remaining
 							</p>
 						`
 						: null

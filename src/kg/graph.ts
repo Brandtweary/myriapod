@@ -51,7 +51,12 @@ export class Graph {
 	// -- load() -----------------------------------------------------------
 	private load(asset: GraphAsset): void {
 		for (const [id, t] of Object.entries(asset.thoughts)) {
+			// Defend against a malformed import bricking the whole store: skip a row
+			// with no usable label, and trust the map key as the canonical id (a
+			// key ≠ t.id would otherwise make the entry invisible to get()).
+			if (typeof t.label !== "string") continue;
 			if (!Array.isArray(t.aliases)) t.aliases = [];
+			t.id = id;
 			this.thoughts.set(id, t);
 			this.labelIndex.set(t.label.toLowerCase(), t.id);
 			this.indexStem(t);
@@ -83,7 +88,7 @@ export class Graph {
 	/** Empty mutable store — the personal memory starts here. */
 	static empty(): Graph {
 		return new Graph({
-			meta: { version: 1, node_count: 0, last_modified: nowIso() },
+			meta: { version: 2, node_count: 0, last_modified: nowIso() },
 			thoughts: {},
 		});
 	}
@@ -208,11 +213,24 @@ export class Graph {
 		this.unindex(loser);
 		this.thoughts.delete(loser.id);
 		const taken = new Set(survivor.aliases);
+		const survivorLabelLc = survivor.label.toLowerCase();
 		for (const a of [loser.label.toLowerCase(), ...loser.aliases]) {
-			if (a !== survivor.label.toLowerCase() && !taken.has(a)) {
-				survivor.aliases.push(a);
-				taken.add(a);
+			if (a === survivorLabelLc || taken.has(a)) continue;
+			// Global alias-uniqueness (matching addAlias): never absorb an alias
+			// already owned by another term as its label or alias — that would
+			// double-route the surface form.
+			if (this.labelIndex.has(a)) continue;
+			let heldByOther = false;
+			for (const other of this.thoughts.values()) {
+				if (other.id === survivor.id) continue;
+				if (other.aliases.includes(a)) {
+					heldByOther = true;
+					break;
+				}
 			}
+			if (heldByOther) continue;
+			survivor.aliases.push(a);
+			taken.add(a);
 		}
 		survivor.hit_count = (survivor.hit_count ?? 0) + (loser.hit_count ?? 0);
 		this.touch(survivor);
@@ -261,7 +279,7 @@ export class Graph {
 	searchText(query: string, limit = 50): { label: string; description: string; hit_count: number }[] {
 		const q = query.trim().toLowerCase();
 		if (!q) return [];
-		const cap = Math.min(Math.max(limit, 1), 100);
+		const cap = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
 
 		const results: { label: string; description: string; hit_count: number }[] = [];
 		for (const t of this.thoughts.values()) {
@@ -279,38 +297,45 @@ export class Graph {
 
 	// -- buildTermIndex() -------------------------------------------------
 	private buildTermIndex(): void {
-		const termIndex = new Map<string, TermEntry>();
+		// Multi-valued so terms that prepare to the same key (e.g. two stems
+		// colliding, or a later label reusing an earlier term's alias key) coexist
+		// instead of last-writer-wins silently shadowing one of them.
+		const termIndex = new Map<string, TermEntry[]>();
+		const push = (key: string, entry: TermEntry): void => {
+			let list = termIndex.get(key);
+			if (!list) {
+				list = [];
+				termIndex.set(key, list);
+			}
+			if (!list.some((e) => e.node_id === entry.node_id)) list.push(entry);
+		};
 
 		for (const t of this.thoughts.values()) {
 			if (!t.description) continue;
 
 			const noStem = t.metadata?.no_stem ?? true; // default: exact match
 			const preparedKey = noStem ? t.label.toLowerCase() : stemText(t.label);
-			termIndex.set(preparedKey, { node_id: t.id, no_stem: noStem });
+			push(preparedKey, { node_id: t.id, no_stem: noStem });
 
-			// Auto-alias: hyphenated labels get a space-separated variant.
-			if (t.label.includes("-")) {
-				const spaceVersion = t.label.replace(/-/g, " ");
-				const preparedSpace = noStem ? spaceVersion.toLowerCase() : stemText(spaceVersion);
-				if (!termIndex.has(preparedSpace)) {
-					termIndex.set(preparedSpace, { node_id: t.id, no_stem: noStem });
-				}
+			// Auto-alias: labels carrying internal punctuation the tokenizer splits on
+			// (hyphens, apostrophes, …) get a space-separated variant, so a form typed
+			// or spoken with the punctuation still routes. tokenize() yields the same
+			// space-joined shape the query side rejoins to.
+			const labelJoined = tokenize(t.label).join(" ");
+			if (labelJoined.includes(" ") && labelJoined !== preparedKey) {
+				push(noStem ? labelJoined : stemText(labelJoined), { node_id: t.id, no_stem: noStem });
 			}
 
 			// Explicit aliases (spoken variants, abbreviations, persistent
-			// mistranscriptions) — always exact-matched. Hyphenated aliases get the
-			// same space-separated variant as labels (a hyphenated key never matches
-			// the tokenizer's split words otherwise).
+			// mistranscriptions) — always exact-matched. Punctuated aliases get the
+			// same space-separated variant as labels (a hyphenated/apostrophe'd key
+			// never matches the tokenizer's split words otherwise).
 			for (const alias of t.aliases) {
 				const preparedAlias = alias.toLowerCase();
-				if (!termIndex.has(preparedAlias)) {
-					termIndex.set(preparedAlias, { node_id: t.id, no_stem: true });
-				}
-				if (alias.includes("-")) {
-					const spaceAlias = alias.replace(/-/g, " ").toLowerCase();
-					if (!termIndex.has(spaceAlias)) {
-						termIndex.set(spaceAlias, { node_id: t.id, no_stem: true });
-					}
+				push(preparedAlias, { node_id: t.id, no_stem: true });
+				const aliasJoined = tokenize(alias).join(" ");
+				if (aliasJoined.includes(" ") && aliasJoined !== preparedAlias) {
+					push(aliasJoined, { node_id: t.id, no_stem: true });
 				}
 			}
 		}
@@ -318,16 +343,11 @@ export class Graph {
 		// Split into single-word (dict lookup) and multi-word (regex).
 		this.termSingle = new Map();
 		this.termMulti = [];
-		for (const [key, data] of termIndex) {
+		for (const [key, entries] of termIndex) {
 			if (key.includes(" ")) {
-				this.termMulti.push([key, data]);
+				for (const data of entries) this.termMulti.push([key, data]);
 			} else {
-				let list = this.termSingle.get(key);
-				if (!list) {
-					list = [];
-					this.termSingle.set(key, list);
-				}
-				list.push(data);
+				this.termSingle.set(key, entries);
 			}
 		}
 		this.termIndexValid = true;
@@ -370,13 +390,18 @@ export class Graph {
 
 		// Slow path: multi-word keys via regex.
 		let stemmedTextCache: string | null = null;
+		// Tokens rejoined with single spaces (no depluralization) so a multi-word
+		// exact key ("apis mellifera") matches input typed with the internal
+		// punctuation ("apis-mellifera") — the tokenizer splits the punct, the
+		// rejoin normalizes it to the stored space-joined form.
+		const rejoinedText = tokenize(lowercased).join(" ");
 		// Depluralized text so a multi-word exact key ("term store") still
 		// matches an S-pluralized phrase ("term stores") in the input.
 		const singularText = tokenize(lowercased).map((t) => depluralize(t)).join(" ");
 		for (const [preparedKey, data] of this.termMulti) {
 			const pattern = new RegExp(`\\b${escapeRegExp(preparedKey)}\\b`);
 			if (data.no_stem) {
-				if (pattern.test(lowercased) || pattern.test(singularText)) {
+				if (pattern.test(lowercased) || pattern.test(rejoinedText) || pattern.test(singularText)) {
 					matchedIds.add(data.node_id);
 				}
 			} else {

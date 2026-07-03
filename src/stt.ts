@@ -193,29 +193,39 @@ export class PcmRecorder {
 			this.ownsStream = true;
 		}
 
-		const audioContext = new AudioContext();
-		this.audioContext = audioContext;
-		this.nativeRate = audioContext.sampleRate; // typically 48000
-		dbg(`[stt] recorder start: native rate ${this.nativeRate}Hz`);
+		// Build the capture graph inside a guard: addModule() can throw (CSP/offline/404)
+		// AFTER the AudioContext (and, if we opened it, the mic stream) already exist, so
+		// on any failure tear everything down before rethrowing — otherwise the context
+		// and the owned mic leak.
+		try {
+			const audioContext = new AudioContext();
+			this.audioContext = audioContext;
+			this.nativeRate = audioContext.sampleRate; // typically 48000
+			dbg(`[stt] recorder start: native rate ${this.nativeRate}Hz`);
 
-		const worklet = await getAudioWorkletNode(audioContext, "pcm-recorder-processor");
-		worklet.port.onmessage = (ev: MessageEvent) => {
-			if (!this.running) return;
-			const samples = (ev.data as { samples?: Float32Array }).samples;
-			if (samples) this.chunks.push(samples);
-		};
+			const worklet = await getAudioWorkletNode(audioContext, "pcm-recorder-processor");
+			worklet.port.onmessage = (ev: MessageEvent) => {
+				if (!this.running) return;
+				const samples = (ev.data as { samples?: Float32Array }).samples;
+				if (samples) this.chunks.push(samples);
+			};
 
-		const source = audioContext.createMediaStreamSource(this.stream);
-		source.connect(worklet);
-		// The recorder worklet writes nothing to its outputs, so connecting it to the
-		// destination pulls the graph (the engine only renders nodes on a path to the
-		// destination) while playing pure silence — no mic echo.
-		worklet.connect(audioContext.destination);
+			const source = audioContext.createMediaStreamSource(this.stream);
+			source.connect(worklet);
+			// The recorder worklet writes nothing to its outputs, so connecting it to the
+			// destination pulls the graph (the engine only renders nodes on a path to the
+			// destination) while playing pure silence — no mic echo.
+			worklet.connect(audioContext.destination);
 
-		this.source = source;
-		this.worklet = worklet;
-		this.running = true;
-		await audioContext.resume();
+			this.source = source;
+			this.worklet = worklet;
+			this.running = true;
+			await audioContext.resume();
+		} catch (e) {
+			this.running = false;
+			this.teardown();
+			throw e;
+		}
 	}
 
 	/**
@@ -224,6 +234,12 @@ export class PcmRecorder {
 	 */
 	async stop(): Promise<Float32Array> {
 		if (!this.running) return new Float32Array(0);
+
+		// Worklet chunks already posted but not yet dispatched to onmessage would be
+		// dropped by its `if (!this.running) return` guard if we flipped running now,
+		// losing the final few ms of the utterance. Yield one macrotask first — while
+		// running is still true — so those queued postMessages land in this.chunks.
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		this.running = false;
 
 		const merged = concatFloat32(this.chunks);

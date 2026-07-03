@@ -90,6 +90,24 @@ test("heartbeat on an unknown lease returns false", () => {
 	expect(b.heartbeat("nope")).toBe(false);
 });
 
+test("a lease is reclaimed past the absolute max-age even while heartbeating", () => {
+	let t = 0;
+	const b = new VoiceBroker({ instances: ONE, capacity: 1, heartbeatSec: 60, maxLeaseSec: 300, now: () => t });
+	const first = b.lease();
+	expect(first.granted).toBe(true);
+	// Beat every 100s to stay inside the 3x-heartbeat (180s) TTL...
+	t = 100_000;
+	if (first.granted) expect(b.heartbeat(first.leaseId)).toBe(true);
+	t = 200_000;
+	if (first.granted) expect(b.heartbeat(first.leaseId)).toBe(true);
+	// ...but cross the 300s absolute age cap (last beat only 105s ago → not TTL-stale).
+	t = 305_000;
+	// Capacity is 1: a granted re-lease proves the still-heartbeating lease was reclaimed
+	// by the age cap (otherwise this would 202-queue).
+	const after = b.lease();
+	expect(after.granted).toBe(true);
+});
+
 test("two instances load-balance: the second lease lands on the empty instance", () => {
 	const { b } = brokerWithClock(TWO, 1);
 	const a = b.lease();

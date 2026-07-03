@@ -39,9 +39,11 @@ export function depluralize(word: string): string {
 	return w;
 }
 
-// Tokenize on word boundaries: lowercase, then runs of [a-z0-9_].
+// Tokenize on word boundaries: lowercase, then runs of Unicode letters/digits
+// plus `_`. Unicode-aware so accented/non-ASCII single-word terms (café, São)
+// survive as whole tokens rather than being split on the accent.
 export function tokenize(text: string): string[] {
-	return text.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
+	return text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
 }
 
 export function stemText(text: string): string {

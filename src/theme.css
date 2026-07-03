@@ -431,3 +431,41 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 	color: oklch(100% 0 0 / 0.9);
 	font-weight: 600;
 }
+
+/* About page — rendered markdown prose */
+.cw-about {
+	color: var(--foreground);
+	font-size: 0.95rem;
+	line-height: 1.7;
+}
+.cw-about h1 {
+	color: var(--primary);
+	font-size: 1.7rem;
+	font-weight: 600;
+	margin-bottom: 0.5rem;
+}
+.cw-about h2 {
+	color: var(--foreground);
+	font-size: 1.2rem;
+	font-weight: 600;
+	margin-top: 1.75rem;
+	margin-bottom: 0.35rem;
+}
+.cw-about p {
+	margin: 0.9rem 0;
+}
+.cw-about strong {
+	color: var(--foreground);
+	font-weight: 700;
+}
+.cw-about em {
+	font-style: italic;
+}
+.cw-about a {
+	color: var(--primary);
+	text-decoration: underline;
+	word-break: break-word;
+}
+.cw-about a:hover {
+	opacity: 0.8;
+}

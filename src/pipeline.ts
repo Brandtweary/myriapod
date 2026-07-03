@@ -100,6 +100,9 @@ export interface PipelineDeps {
 	onStateChange: (state: "running" | "idle") => void;
 	// Right-gutter activity feed repaint.
 	onActivity: () => void;
+	// Current memory-consent state, re-checked right before persisting so a consent
+	// revoked mid-tick is honored. Absent/undefined is treated as granted.
+	getConsent?: () => string;
 }
 
 // -- Transcript formatting ----------------------------------------------------
@@ -181,16 +184,9 @@ export class PipelineRuntime {
 		} catch (err) {
 			dbgError("pipeline state load failed (starting fresh):", err);
 		}
-		// Seed the activity feed with the tail of past actions so the gutter isn't
-		// empty on load.
-		const seeded: ActivityItem[] = [];
-		for (const agent of Object.keys(this.buffers) as PipelineAgentName[]) {
-			for (const entry of this.buffers[agent]) {
-				for (const line of entry.actions) seeded.push({ ts: entry.ts, agent, line });
-			}
-		}
-		seeded.sort((a, b) => (a.ts < b.ts ? -1 : 1));
-		this.activity.push(...seeded.slice(-ACTIVITY_MAX_ITEMS));
+		// The activity feed starts empty every session — it's a live view of this
+		// session's pipeline work, not a persisted log. (The action buffers above
+		// still load; they're the agents' cross-turn memory, not the gutter feed.)
 	}
 
 	/** A new conversation began (createAgent). The summary agent keys its
@@ -235,7 +231,7 @@ export class PipelineRuntime {
 			this.queued = { getMessages, isVoiceTurn };
 			return;
 		}
-		void this.tick(getMessages, isVoiceTurn);
+		this.tick(getMessages, isVoiceTurn).catch((e) => dbgError("pipeline tick failed:", e));
 	}
 
 	async persist(): Promise<void> {
@@ -368,13 +364,25 @@ export class PipelineRuntime {
 			},
 		});
 
-		const raw = await completion([
-			{ role: "system", content: PIPELINE_SYSTEM_STUB },
-			{
-				role: "user",
-				content: `## Conversation transcript\n\n${transcript}\n\n---\n\n${buildSummaryInstructions(priorBlock)}`,
-			},
-		]);
+		// Same hard wall as the tooled agents: a hung completion must not wedge the
+		// pipeline (leaving this.running = true) for the rest of the session.
+		const abort = new AbortController();
+		const timer = setTimeout(() => abort.abort(), AGENT_TIMEOUT_MS);
+		let raw: string;
+		try {
+			raw = await completion(
+				[
+					{ role: "system", content: PIPELINE_SYSTEM_STUB },
+					{
+						role: "user",
+						content: `## Conversation transcript\n\n${transcript}\n\n---\n\n${buildSummaryInstructions(priorBlock)}`,
+					},
+				],
+				abort.signal,
+			);
+		} finally {
+			clearTimeout(timer);
+		}
 		const entry = raw.trim();
 		if (!entry || entry.includes(NO_ENTRY_SENTINEL)) return;
 
@@ -400,10 +408,13 @@ export class PipelineRuntime {
 	}
 
 	private async tick(getMessages: () => AgentMessage[], isVoiceTurn: boolean): Promise<void> {
-		this.running = true;
-		this.deps.onStateChange("running");
 		const tickStart = performance.now();
+		// running + the state repaint go INSIDE the try: if onStateChange throws (it
+		// drives a DOM refresh), the finally still resets running, so a repaint fault
+		// can't wedge the pipeline for the rest of the session.
+		this.running = true;
 		try {
+			this.deps.onStateChange("running");
 			const transcript = formatTranscript(getMessages());
 			if (!transcript.trim()) return;
 
@@ -437,16 +448,33 @@ export class PipelineRuntime {
 
 			await summaryP;
 
-			await this.deps.saveGraph();
-			await this.persist();
+			// Consent can be revoked mid-tick (it's only checked at the trigger). Re-check
+			// right before persisting so an opt-out isn't followed seconds later by a write.
+			// Absent dep → undefined → treat as granted (don't break if wiring order differs).
+			const consent = this.deps.getConsent?.();
+			if (consent === undefined || consent === "granted") {
+				await this.deps.saveGraph();
+				await this.persist();
+			} else {
+				dbg("pipeline: consent revoked mid-tick — skipping memory writes");
+			}
 			dbg(`pipeline tick done in ${Math.round(performance.now() - tickStart)}ms`);
 		} finally {
 			this.running = false;
-			this.deps.onStateChange("idle");
-			if (this.queued) {
-				const q = this.queued;
-				this.queued = null;
-				void this.tick(q.getMessages, q.isVoiceTurn);
+			// Drain the coalesced follow-up FIRST, then repaint: a throw from the idle
+			// repaint must not strand a queued turn's memory update. The idle callback is
+			// itself guarded so it can't take down the tick.
+			const q = this.queued;
+			this.queued = null;
+			try {
+				this.deps.onStateChange("idle");
+			} catch (err) {
+				dbgError("pipeline onStateChange(idle) failed:", err);
+			}
+			if (q) {
+				this.tick(q.getMessages, q.isVoiceTurn).catch((e) =>
+					dbgError("pipeline tick failed:", e),
+				);
 			}
 		}
 	}

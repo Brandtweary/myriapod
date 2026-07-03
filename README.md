@@ -1,70 +1,96 @@
 # Myriapod
 
-A browser-local **voice agent** with a self-maintaining memory that lives in your own browser.
+A voice agent you can talk to, with a memory that stays yours.
 
-A thing you can actually talk to. Speak or type, and a personal memory grows in-page from the
-conversation, giving the agent recall that persists across turns and across visits.
-
-It's a curated stack of **open-weight models** — open speech-to-text, a frontier open-weight LLM, and
-open text-to-speech — wired into one voice loop, with a memory layer you own and can see. Every model in
-the path has published weights, so the whole thing is self-hostable; the hosted demo just spares you
-standing up a GPU.
+Speak or type, and a personal memory grows out of the conversation — kept in your own browser,
+carried from one visit to the next, always in your hands.
 
 ## What it is
 
-- **A voice agent** — talk to it. Speech-to-text, a frontier LLM, and text-to-speech form the loop; you
-  tap to talk and tap again to end your turn (turn-based, not always-listening). You can also just type.
-- **A persistent-memory assistant** — after each turn, a small crew of background agents reads the
-  exchange and tends a personal memory: a glossary of the people, things, and ideas in your world, each
-  with an evergreen description. It's stored only in your browser (IndexedDB), never uploaded, and is
-  exportable/importable for durability. Memory is **opt-in** — a single toggle on first launch, on by
-  default, flippable anytime in Settings.
+- **A voice agent** — you *tap* to record and tap again to send. No voice-activity detection
+  deciding when you're done, so it never chimes in while you're still thinking or talks over you;
+  when you want to cut a reply short, one keystroke (Ctrl+Alt+Space) does it.
+- **A lexicon-based memory** — after each exchange, a few quiet background agents read what was said
+  and tend a glossary of the people, things, and ideas in your world, each with a short, living
+  description. You opt into it, and you can export it or wipe it whenever you like.
 
-The memory layer is made **visible**: beside the chat, one gutter shows the terms matched for your
-message and the other shows the background agents at work — the memory tending itself, on screen rather
-than hidden behind the generation.
+Beside the chat, the memory shows its work: one margin lists what it recalled for you this turn, the
+other shows the background agents tending it. The remembering happens out in the open.
+
+## Why "Myriapod"
+
+The word 'centipede' means "hundred feet", 'millipede' means "thousand feet", and the subphylum both groups belong to, Myriapoda, means "ten thousand feet". 
+
+A myriapod walks on many small legs. No single leg carries the animal; each one lifts, reaches, and
+sets down in its turn, and the body never waits on any of them; it just keeps moving. The software
+has that same gait. The conversation is the body, always going forward, and behind each exchange
+comes a short line of small workers, one after another, each doing its piece of the remembering and
+handing the work along. The whole thing is built to move in step with a person, turn by turn.
 
 ## How it works
 
-The **browser orchestrates** the whole loop — there is no conversation backend. Retrieval, the personal
-memory, and the every-turn memory pipeline all run in-page over IndexedDB, no server round-trip for
-memory. Per turn, a keyword router matches your message against your memory and injects the matched
-descriptions into the prompt; then, after the turn, the background pipeline updates the memory.
+Myriapod wires together a few open models, and the wiring runs in your browser. The models do the
+real work: speech-to-text, the language model, and text-to-speech, each running on a server. Your
+browser handles the hand-offs: it captures your voice, sends it off to be transcribed, passes the
+transcript to the language model, streams the reply out to be spoken, and plays the audio back.
 
-The browser drives these endpoints directly:
+The memory is the one part that lives on your machine. Your browser stores it in its own local
+storage, on your computer, and sends it nowhere. A small backend sits in front of the language model
+to hold its key, so your browser never has to; bring your own key and your browser talks to the model
+directly.
 
-- **Speech-to-text** — an open [Whisper](https://github.com/SYSTRAN/faster-whisper) model over HTTP.
-  Your whole utterance is sent as one batch and comes back as a transcript.
-- **The LLM** — an OpenAI-compatible chat endpoint streaming the reply. The demo serves
-  [`z-ai/glm-5.2`](https://openrouter.ai/z-ai/glm-5.2) (open weights, 1M context) over OpenRouter; the
-  model is swappable.
-- **Text-to-speech** — a WebSocket to an open [Kyutai](https://github.com/kyutai-labs) moshi TTS model.
-  The reply is chunked into sentences as it streams and spoken back, so audio starts before the model
-  has finished writing.
+Because every model in the stack is open, you can host them yourself and run the whole thing on your
+own hardware; the hosted demo just runs them for you.
+
+### The voice loop
+
+When you finish a turn, your speech goes to an open
+[Whisper](https://github.com/SYSTRAN/faster-whisper) model and comes back as text. The language model
+reads it, along with whatever the memory surfaced for you, and streams a reply that an open
+[Kyutai](https://github.com/kyutai-labs) voice speaks aloud as it arrives, so you hear the first
+words before the last are written. The reference deployment runs
+[GLM 5.2](https://openrouter.ai/z-ai/glm-5.2); swapping it is a one-line change.
+
+### The memory
+
+The memory is a glossary: a running list of what matters across your conversations, each entry a
+short description kept current as the subject comes up again. When you speak, your words are matched
+against it and the descriptions that fit are handed to the model, so it answers with your world in
+view.
+
+The whole memory travels: the glossary, the running notes, and the small speech corrections it's
+picked up all export to a single file, the lexicon, that you can read back another day or on another
+machine.
+
+### The pipeline
+
+After every turn, a handful of background agents read the exchange, each with its own task. One
+keeps watch over what the memory recalled and mends any description that came out thin. One decides
+what's worth holding onto and writes it down. One keeps a short account of the conversation so far,
+so your next visit opens with the thread already in hand. None of them make you wait — the reply is
+already on its way while they work.
 
 ## Run it yourself
 
-This repo is the frontend. The model endpoints are all open and self-hostable:
+Everything under the hood is open. Every model in the path has published weights, so you can stand
+the whole thing up on your own hardware and answer to no hosted service. This repo is the frontend;
+the model endpoints are all self-hostable:
 
-- **STT** — an open [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server over HTTP; point
-  the frontend at it with `VITE_STT_BASE`. **TTS** — an open [Kyutai](https://github.com/kyutai-labs)
-  moshi model over a WebSocket; `VITE_TTS_BASE`.
-- **The LLM** — any OpenAI-compatible chat endpoint hosting an open-weight model. The hosted demo routes
-  it through a small **metering proxy** (the one server-side piece, not in this repo) that holds the
-  upstream key and hands out $10 of free credits per browser so you can try it without signing up; point
-  the frontend at the proxy with `VITE_PROXY_BASE`. If you bring your own OpenRouter key in Settings, the
-  browser calls OpenRouter directly and the proxy is bypassed entirely.
+- **STT** — an open [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server over HTTP;
+  point the frontend at it with `VITE_STT_BASE`.
+- **TTS** — an open [Kyutai](https://github.com/kyutai-labs) moshi model over a WebSocket;
+  `VITE_TTS_BASE`.
+- **LLM** — any OpenAI-compatible chat endpoint hosting an open-weight model, either through your own
+  instance of the backend (`VITE_PROXY_BASE`) or straight to a provider with your own key in Settings.
 
-The agent ships with a stock system prompt (`VOICE_SYSTEM_PROMPT` in `src/main.ts`) — a deliberately
-evergreen persona that names no model, version, or hardware and reaches for no tools, which suits a
-hosted agent that can't assume its substrate. **If you run your own instance, swap it for a prompt that
-fits your agent** — a local home agent, for example, may well want the hardware and version awareness
-this one omits.
+The stock system prompt (`VOICE_SYSTEM_PROMPT` in `src/main.ts`) is written for the hosted instance,
+down to the model and voice it names. If you run your own, rewrite it to fit — a local home agent,
+say, may want the hardware awareness the hosted prompt has no use for.
 
 ## Stack
 
 TypeScript on [`@earendil-works/pi-web-ui`](https://www.npmjs.com/package/@earendil-works/pi-web-ui)
-(Lit 3, Tailwind v4, Vite) — a static single-page app; the conversation rides the
+(Lit 3, Tailwind v4, Vite), a static single-page app; the conversation rides the
 `@earendil-works/pi-agent-core` agent. Architecture and internals are documented in
 [`CLAUDE.md`](./CLAUDE.md).
 

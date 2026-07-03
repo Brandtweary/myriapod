@@ -105,5 +105,24 @@ const termCount = (g: Graph) => g.thoughts.size;
 	check("round-trip term_match", g2.termMatch("alpha").some((m) => m.label === "alpha"));
 }
 
+// -- non-ASCII / punctuated surface forms retrieve --------------------------
+{
+	// Accented single-word label: the tokenizer must keep the accent so the stored
+	// key ("café") is reproducible from an input token.
+	const g = Graph.empty();
+	g.getOrCreate("café", "A coffeehouse.");
+	check("accented single-word term retrieves", g.termMatch("met them at a café today").some((m) => m.label === "café"));
+
+	// Apostrophe label: gets a punct→space auto-variant so a form typed with the
+	// apostrophe still routes.
+	g.getOrCreate("O'Brien", "A person we discussed.");
+	check("apostrophe label retrieves", g.termMatch("spoke with O'Brien yesterday").some((m) => m.label === "O'Brien"));
+
+	// Hyphenated alias typed WITH the hyphen (the live apis-mellifera class).
+	g.getOrCreate("honeybee", "The common honeybee.");
+	check("add hyphenated alias ok", g.addAlias("honeybee", "apis-mellifera"));
+	check("hyphenated alias typed with hyphen retrieves", g.termMatch("found an apis-mellifera specimen").some((m) => m.label === "honeybee"));
+}
+
 console.log(failures === 0 ? "\nAll term-store tests passed." : `\n${failures} test(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

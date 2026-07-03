@@ -165,6 +165,10 @@ export interface TtsConfig {
 	cfgAlpha?: number;
 	// moshi `public_token` (see the auth caveat below).
 	apiKey?: string;
+	// Fired (at most once per synth) when a whole run() produced zero Audio frames —
+	// i.e. the text rendered but nothing spoke (moshi unreachable/failing all turn).
+	// The orchestrator wires this to a user-facing notice; unset = silent (default).
+	onVoiceUnavailable?: () => void;
 }
 
 // =============================================================================
@@ -202,10 +206,17 @@ const DRAIN_INTERVAL_MS = 15;
 
 // moshi has a startup race — the WS opens before the model is loaded and a
 // {type:"Ready"} message is sent. We wait for Ready before sending any text,
-// polling up to MAX_READY_CHECKS × READY_CHECK_MS before giving up and sending
-// anyway (so a missed/renamed Ready can't wedge the turn forever).
-const MAX_READY_CHECKS = 10;
+// polling up to MAX_READY_CHECKS × READY_CHECK_MS before giving up (a ready
+// socket sends anyway; a socket that never opened is skipped). Kept tight so a
+// missed/renamed Ready costs a few seconds of dead air, not ~10s per sentence.
+const MAX_READY_CHECKS = 3;
 const READY_CHECK_MS = 1000;
+
+// Ceiling on how long endSession() waits for a session's `done` (ws close/error).
+// A moshi that streams PCM but never closes would otherwise wedge run() forever;
+// on timeout we close the socket so the sentence loop advances. Sized a few
+// seconds beyond expected per-sentence generation time (moshi runs >realtime).
+const SESSION_DONE_TIMEOUT_MS = 8000;
 
 
 // Inbound message shapes (msgpack). We act on Ready + Audio; Text timing
@@ -224,6 +235,10 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 	private readyResolvers: Array<() => void> = [];
 	// Set by stop(); checked throughout run() so a barge-in unwinds promptly.
 	private aborted = false;
+	// Whether any Audio frame arrived during the current run() (reset per run).
+	private sawAudio = false;
+	// One-shot latch so the "voice unavailable" signal fires at most once per synth.
+	private voiceUnavailableNotified = false;
 	// Monotonic session epoch. Each socket is stamped with the gen that was current
 	// when it opened; a new utterance (run) and stop() both bump it. handleMessage
 	// drops every message whose stamp != the current gen, so a stale session's late
@@ -303,6 +318,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 		const myGen = ++this.gen;
 		this.closeWs();
 		this.aborted = false;
+		this.sawAudio = false;
 		this.resetPacing();
 
 		// moshi concatenates every Text message in a session into ONE generation, and
@@ -313,20 +329,53 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 		// (scheduleFrame) stays ahead of playback and a sentence keeps playing while the next
 		// session spins up — no audible gap. Generation is serialized per sentence; playback
 		// stays continuous.
+		let attempted = false;
 		try {
 			for await (const chunk of chunks) {
 				// A newer utterance (or stop()) bumped the epoch — abandon this stale
 				// loop so it stops spinning up sessions for a superseded utterance.
 				if (this.aborted || myGen !== this.gen) break;
-				const session = await this.openSession();
-				if (!session) return;
-				if (this.aborted || session.ws.readyState !== WebSocket.OPEN) break;
+				// openSession() returns null on abort/supersede OR a transient socket
+				// failure. Distinguish: a bumped epoch or a barge-in ends the loop; a
+				// transient failure only loses THIS sentence, so try one re-open, then
+				// skip to the next rather than abandoning the rest of the reply.
+				let session = await this.openSession();
+				if (!session) {
+					if (this.aborted || myGen !== this.gen) break;
+					session = await this.openSession();
+					if (!session) {
+						if (this.aborted || myGen !== this.gen) break;
+						dbgWarn("[tts] session open failed; skipping sentence");
+						continue;
+					}
+				}
+				if (this.aborted || myGen !== this.gen || session.ws.readyState !== WebSocket.OPEN) break;
 				session.ws.send(encode({ type: "Text", text: chunk }));
+				attempted = true;
 				dbg(`[tts] -> Text (${chunk.length} chars)`);
 				await this.endSession(session);
 			}
 		} catch (err) {
 			dbgError(`[tts] text stream error: ${String(err)}`);
+		}
+
+		// If we sent at least one sentence but not a single Audio frame ever came back,
+		// the text rendered silently (moshi unreachable/failing all turn) — surface a
+		// one-shot signal so the failure isn't invisible. Suppressed on abort/supersede.
+		if (
+			attempted &&
+			!this.sawAudio &&
+			!this.aborted &&
+			myGen === this.gen &&
+			!this.voiceUnavailableNotified
+		) {
+			this.voiceUnavailableNotified = true;
+			dbgWarn("[tts] no audio frames this turn; TTS may be unavailable");
+			try {
+				this.config.onVoiceUnavailable?.();
+			} catch (err) {
+				dbgWarn(`[tts] onVoiceUnavailable callback threw: ${String(err)}`);
+			}
 		}
 	}
 
@@ -342,7 +391,14 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 		});
 		await this.waitForReady(ws);
 		if (this.aborted || ws.readyState !== WebSocket.OPEN) {
-			this.closeWs();
+			// Close the socket THIS session opened, not the shared this.ws slot — a newer
+			// session (bumped in during the await) may already own this.ws, and closeWs()
+			// would tear that live one down.
+			try {
+				ws.close();
+			} catch {
+				/* already closing */
+			}
 			return null;
 		}
 		return { ws, done };
@@ -356,7 +412,26 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 			session.ws.send(encode({ type: "Eos" }));
 			dbg("[tts] -> Eos");
 		}
-		await session.done;
+		// `done` only settles on ws close/error. A moshi that emits PCM then never closes
+		// would hang here forever and wedge the rest of the turn — so race it against a
+		// timeout, and on the timeout branch close the socket so the loop advances.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				dbgWarn("[tts] session done timeout; closing socket");
+				try {
+					session.ws.close();
+				} catch {
+					/* already closing */
+				}
+				resolve();
+			}, SESSION_DONE_TIMEOUT_MS);
+		});
+		try {
+			await Promise.race([session.done, timeout]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 	}
 
 	private openSocket(): WebSocket {
@@ -429,6 +504,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 				// than realtime, so we queue it for paced release (see scheduleFrame).
 				const pcm = (msg as { pcm?: number[] }).pcm;
 				if (!pcm || !pcm.length) return;
+				this.sawAudio = true;
 				this.scheduleFrame(Float32Array.from(pcm));
 				return;
 			}

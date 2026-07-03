@@ -74,12 +74,16 @@ export async function forwardCompletion(opts: {
 	console.log(`[proxy] ← openrouter status=${res.status} in ${Date.now() - started}ms`);
 
 	if (!res.ok) {
+		// Log the upstream body server-side; never leak it to the client (it can carry
+		// key hints, rate-limit internals, or account detail). Return a generic shape.
+		const upstreamBody = await res.text().catch(() => "");
+		console.error(`[proxy] ✗ openrouter error status=${res.status} body=${upstreamBody.slice(0, 2000)}`);
 		return {
 			status: res.status,
 			ok: false,
 			stream: false,
-			clientText: await res.text(),
-			contentType: res.headers.get("content-type") ?? "application/json",
+			clientText: JSON.stringify({ error: "upstream error", status: res.status }),
+			contentType: "application/json",
 			usage: Promise.resolve(null),
 		};
 	}

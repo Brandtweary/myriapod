@@ -20,6 +20,7 @@ import { randomBytes } from "node:crypto";
 import { config } from "./config";
 import { Db } from "./db";
 import { forwardCompletion, mintSubKey } from "./openrouter";
+import type { Usage } from "./openrouter";
 import { grantGatesPass } from "./anon";
 import { VoiceBroker, registerVoiceRoutes } from "./voice-broker";
 import type { Context } from "hono";
@@ -33,6 +34,7 @@ const voiceBroker = new VoiceBroker({
 	instances: config.voiceInstances,
 	capacity: config.voiceInstanceCapacity,
 	heartbeatSec: config.voiceHeartbeatSec,
+	maxLeaseSec: config.voiceMaxLeaseSec,
 });
 
 app.use(
@@ -58,7 +60,7 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 // Voice-session broker routes (POST /voice/lease | /heartbeat | /release).
 // Registered after the CORS + access-log middleware so both apply.
-registerVoiceRoutes(app, voiceBroker);
+registerVoiceRoutes(app, voiceBroker, clientIp);
 
 /** The bearer token presented by the client, or "" if none. The legacy "anon"
  *  placeholder (sent before a real token exists) is treated as no-bearer. */
@@ -68,16 +70,24 @@ function bearerOf(c: Context): string {
 	return t === "anon" ? "" : t;
 }
 
-/** Prefer the X-Forwarded-For client when behind a tunnel/reverse proxy, else
- *  the direct connection address. */
+/** The client IP for per-IP limits + signup/continuity. Honors X-Forwarded-For ONLY
+ *  when the direct socket peer is a configured trusted proxy (config.trustedProxies,
+ *  or "*"). Untrusted → the real peer, so a client can't spoof its IP via XFF. */
 function clientIp(c: Context): string {
-	const xff = c.req.header("x-forwarded-for");
-	if (xff) return xff.split(",")[0]!.trim();
+	let peer = "unknown";
 	try {
-		return getConnInfo(c).remote.address ?? "unknown";
+		peer = getConnInfo(c).remote.address ?? "unknown";
 	} catch {
-		return "unknown";
+		peer = "unknown";
 	}
+	if (config.trustedProxies.length) {
+		const trusted = config.trustedProxies.includes("*") || config.trustedProxies.includes(peer);
+		if (trusted) {
+			const xff = c.req.header("x-forwarded-for");
+			if (xff) return xff.split(",")[0]!.trim();
+		}
+	}
+	return peer;
 }
 
 // Current principal's remaining hosted credit (for the Access settings readout).
@@ -154,6 +164,8 @@ app.get("/v1/web-search", async (c) => {
 // non-browser abuse. Not money, not metered; a restart resets the counts.
 const EMBED_WINDOW_MS = 60_000;
 const EMBED_MAX = 240; // higher than web-search: a busy turn embeds several terms
+const EMBED_MAX_INPUTS = 64; // per-request array cap
+const EMBED_MAX_INPUT_CHARS = 8192; // per-string cap
 const embedHits = new Map<string, number[]>();
 function embedRateLimited(ip: string): boolean {
 	const now = Date.now();
@@ -163,6 +175,60 @@ function embedRateLimited(ip: string): boolean {
 	embedHits.set(ip, hits);
 	return hits.length > EMBED_MAX;
 }
+
+// Per-IP brute-force guard for /redeem: a raw sliding-window cap PLUS an escalating
+// backoff that lengthens with each failed (unknown-code) attempt. Both maps are
+// in-memory + ephemeral and pruned by the periodic sweep below.
+const REDEEM_WINDOW_MS = 60_000;
+const REDEEM_MAX_PER_WINDOW = 12; // raw attempts/min per IP before a hard 429
+const REDEEM_BACKOFF_BASE_MS = 2_000;
+const REDEEM_BACKOFF_MAX_MS = 15 * 60_000;
+const redeemHits = new Map<string, number[]>();
+const redeemFailures = new Map<string, { count: number; blockedUntil: number }>();
+function redeemRateLimited(ip: string): boolean {
+	const now = Date.now();
+	const f = redeemFailures.get(ip);
+	if (f && now < f.blockedUntil) return true;
+	const cutoff = now - REDEEM_WINDOW_MS;
+	const hits = (redeemHits.get(ip) ?? []).filter((t) => t > cutoff);
+	hits.push(now);
+	redeemHits.set(ip, hits);
+	return hits.length > REDEEM_MAX_PER_WINDOW;
+}
+function noteRedeemFailure(ip: string): void {
+	const now = Date.now();
+	const f = redeemFailures.get(ip) ?? { count: 0, blockedUntil: 0 };
+	f.count += 1;
+	f.blockedUntil = now + Math.min(REDEEM_BACKOFF_BASE_MS * 2 ** (f.count - 1), REDEEM_BACKOFF_MAX_MS);
+	redeemFailures.set(ip, f);
+}
+function noteRedeemSuccess(ip: string): void {
+	redeemFailures.delete(ip);
+	redeemHits.delete(ip);
+}
+
+// Periodic eviction for the in-memory per-IP rate-limit maps so a flood of distinct
+// IPs can't grow them without bound. Unref'd → never keeps the process (or a test run)
+// alive. Sweeps expired sliding-window entries and lapsed backoff records.
+const RATE_MAP_SWEEP_MS = 5 * 60_000;
+function pruneWindowMap(map: Map<string, number[]>, windowMs: number): void {
+	const cutoff = Date.now() - windowMs;
+	for (const [ip, hits] of map) {
+		const live = hits.filter((t) => t > cutoff);
+		if (live.length) map.set(ip, live);
+		else map.delete(ip);
+	}
+}
+const rateMapSweeper = setInterval(() => {
+	pruneWindowMap(webSearchHits, WEB_SEARCH_WINDOW_MS);
+	pruneWindowMap(embedHits, EMBED_WINDOW_MS);
+	pruneWindowMap(redeemHits, REDEEM_WINDOW_MS);
+	const now = Date.now();
+	for (const [ip, f] of redeemFailures) {
+		if (now >= f.blockedUntil) redeemFailures.delete(ip);
+	}
+}, RATE_MAP_SWEEP_MS);
+rateMapSweeper.unref?.();
 
 // Open (rate-limited) embedding passthrough. Proxies text to the self-hosted
 // embedding-inference container and returns the vectors — the browser can't reach
@@ -182,6 +248,13 @@ app.post("/v1/embed", async (c) => {
 	}
 	const inputs = Array.isArray(body.inputs) ? body.inputs.filter((s) => typeof s === "string") : [];
 	if (!inputs.length) return c.json({ error: "missing inputs (string[])" }, 400);
+	// Bound the passthrough — it's an open door to a GPU host; CORS is not access control.
+	if (inputs.length > EMBED_MAX_INPUTS) {
+		return c.json({ error: `too many inputs (max ${EMBED_MAX_INPUTS})` }, 400);
+	}
+	if (inputs.some((s) => (s as string).length > EMBED_MAX_INPUT_CHARS)) {
+		return c.json({ error: `input too long (max ${EMBED_MAX_INPUT_CHARS} chars each)` }, 400);
+	}
 
 	let res: Response;
 	try {
@@ -265,6 +338,22 @@ app.post("/anon-init", async (c) => {
 	return c.json({ token, remaining: config.freeGrant });
 });
 
+// In-flight reserved spend per cap window, held only while requests are outstanding
+// (added at reservation, removed once the true cost lands in usage_log or is refunded).
+// The DB caps are SUM(usage_log) — blind to concurrent forwards not yet metered — so a
+// burst could all pass the pre-check; adding these to the DB totals closes that gap.
+// All reads/writes here are synchronous, so under Bun's single-threaded event loop the
+// check-then-reserve section below is effectively atomic (no interleaving).
+const inflight = { free: 0, monthly: 0, familyMonthly: 0 };
+
+/** A conservative USD upper bound for one request: prompt bytes (≈4 chars/token) plus
+ *  the generation ceiling, at the configured price ceiling. Used both to pre-reserve
+ *  credit and as the fallback debit when a completion returns no usage. */
+function estimateCostUsd(rawChars: number, maxTokens: number): number {
+	const promptTokens = Math.ceil(rawChars / 4);
+	return ((promptTokens + maxTokens) / 1_000_000) * config.costCeilPerMToken;
+}
+
 app.post("/v1/chat/completions", async (c) => {
 	const raw = await c.req.text();
 	if (raw.length > config.maxInputChars) {
@@ -287,37 +376,48 @@ app.post("/v1/chat/completions", async (c) => {
 		return c.json({ error: "invalid or expired session token" }, 401);
 	}
 
-	let upstreamKey: string;
-	if (principal.tier === "family") {
-		if (principal.credit_remaining <= 0) {
-			return c.json({ error: "family credit exhausted" }, 402);
-		}
-		if (db.familyMonthlySpend() >= config.familyMonthlyCap) {
-			return c.json({ error: "family monthly capacity reached — resets next month" }, 503);
-		}
-		upstreamKey = principal.upstream_key ?? config.ownerKey;
-	} else {
-		if (principal.credit_remaining <= 0) {
-			return c.json(
-				{ error: "free credit used up — add your own OpenRouter key to keep chatting" },
-				402,
-			);
-		}
-		if (db.freeSpendToday() >= config.freeDailyCap) {
-			return c.json(
-				{ error: "the hosted free tier is at capacity for today — try again tomorrow or use your own key" },
-				429,
-			);
-		}
-		upstreamKey = config.ownerKey;
+	const isFamily = principal.tier === "family";
+
+	// Cheap balance guard with a tier-specific message, before the atomic reserve.
+	if (principal.credit_remaining <= 0) {
+		return c.json(
+			isFamily
+				? { error: "family credit exhausted" }
+				: { error: "free credit used up — add your own OpenRouter key to keep chatting" },
+			402,
+		);
 	}
 
+	const upstreamKey = isFamily ? (principal.upstream_key ?? config.ownerKey) : config.ownerKey;
 	if (!upstreamKey) {
 		return c.json({ error: "proxy is missing its upstream key" }, 500);
 	}
 
-	// Global monthly backstop across all metered spend.
-	if (db.monthlySpend() >= config.monthlyCap) {
+	// Model allowlist — the owner key must never fund an arbitrary model.
+	const model = typeof body.model === "string" ? body.model : null;
+	if (!model || !config.allowedModels.includes(model)) {
+		return c.json({ error: "unsupported model" }, 400);
+	}
+
+	const cap = config.maxTokensCap;
+	const maxTokens = typeof body.max_tokens === "number" ? Math.min(body.max_tokens, cap) : cap;
+	const estimate = estimateCostUsd(raw.length, maxTokens);
+
+	// --- Atomic admission ----------------------------------------------------
+	// Cap checks (DB total + in-flight reservations) then an atomic credit reservation.
+	// This runs entirely synchronously, so no concurrent forward can slip between the
+	// check and the reserve (Bun's JS loop is single-threaded).
+	if (isFamily) {
+		if (db.familyMonthlySpend() + inflight.familyMonthly >= config.familyMonthlyCap) {
+			return c.json({ error: "family monthly capacity reached — resets next month" }, 503);
+		}
+	} else if (db.freeSpendToday() + inflight.free >= config.freeDailyCap) {
+		return c.json(
+			{ error: "the hosted free tier is at capacity for today — try again tomorrow or use your own key" },
+			429,
+		);
+	}
+	if (db.monthlySpend() + inflight.monthly >= config.monthlyCap) {
 		return c.json(
 			{
 				error:
@@ -326,46 +426,94 @@ app.post("/v1/chat/completions", async (c) => {
 			503,
 		);
 	}
+	if (!db.reserve(principal.id, estimate)) {
+		return c.json(
+			isFamily
+				? { error: "family credit exhausted" }
+				: { error: "free credit used up — add your own OpenRouter key to keep chatting" },
+			402,
+		);
+	}
+	inflight.monthly += estimate;
+	if (isFamily) inflight.familyMonthly += estimate;
+	else inflight.free += estimate;
 
-	// --- Forward + meter -----------------------------------------------------
-	const cap = config.maxTokensCap;
+	// Settle the reservation exactly once — reconcile to the true (or fallback) cost, or
+	// refund it whole on an upstream error — and drop the in-flight amount.
+	let settled = false;
+	const releaseInflight = () => {
+		inflight.monthly -= estimate;
+		if (isFamily) inflight.familyMonthly -= estimate;
+		else inflight.free -= estimate;
+	};
+	const reconcile = (cost: number, u: Usage | null) => {
+		if (settled) return;
+		settled = true;
+		db.reconcileUsage({
+			principalId: principal.id,
+			model,
+			promptTokens: u?.promptTokens ?? 0,
+			completionTokens: u?.completionTokens ?? 0,
+			cost,
+			reserved: estimate,
+		});
+		releaseInflight();
+	};
+	const refund = () => {
+		if (settled) return;
+		settled = true;
+		db.refundReservation(principal.id, estimate);
+		releaseInflight();
+	};
+
+	// --- Forward -------------------------------------------------------------
 	const fwdBody: Record<string, unknown> = {
 		...body,
-		max_tokens: typeof body.max_tokens === "number" ? Math.min(body.max_tokens, cap) : cap,
+		max_tokens: maxTokens,
 		usage: { include: true },
+		// Enforce Zero Data Retention at the request layer — route only to ZDR
+		// endpoints, independent of the account-level toggle (they OR together).
+		provider: {
+			...((body as Record<string, unknown>).provider as Record<string, unknown> | undefined),
+			zdr: true,
+		},
 	};
-	const model = typeof body.model === "string" ? body.model : null;
 
-	console.log(`[proxy] forwarding: tier=${principal.tier} model=${model ?? "?"} stream=${fwdBody.stream === true}`);
-	const result = await forwardCompletion({
-		base: config.openrouterBase,
-		upstreamKey,
-		body: fwdBody,
-		timeoutMs: config.upstreamTimeoutMs,
-	});
-
-	// Meter once usage is known — runs in the background so it lands even after
-	// the streamed response has been returned (or the client disconnected).
-	result.usage
-		.then((u) => {
-			if (u) {
-				db.recordUsage({
-					principalId: principal.id,
-					model,
-					promptTokens: u.promptTokens,
-					completionTokens: u.completionTokens,
-					cost: u.cost,
-				});
-			}
-		})
-		.catch((err) => console.error("[proxy] metering failed:", err));
+	console.log(`[proxy] forwarding: tier=${principal.tier} model=${model} stream=${fwdBody.stream === true}`);
+	let result;
+	try {
+		result = await forwardCompletion({
+			base: config.openrouterBase,
+			upstreamKey,
+			body: fwdBody,
+			timeoutMs: config.upstreamTimeoutMs,
+		});
+	} catch (err) {
+		refund();
+		console.error("[proxy] forward threw:", err);
+		return c.json({ error: "upstream error", status: 502 }, 502);
+	}
 
 	if (!result.ok) {
-		return new Response(result.clientText ?? "upstream error", {
+		// Upstream failed — no real spend, so refund the reservation. The body is already
+		// a generic {error,status} (openrouter.ts logs the raw upstream body server-side).
+		refund();
+		return new Response(result.clientText ?? JSON.stringify({ error: "upstream error", status: result.status }), {
 			status: result.status,
 			headers: { "Content-Type": result.contentType },
 		});
 	}
+
+	// Success — reconcile once usage is known, in the background so it lands even after
+	// the streamed response returns or the client disconnects. Missing usage → debit the
+	// conservative fallback estimate rather than serving free compute.
+	result.usage
+		.then((u) => reconcile(u ? u.cost : estimate, u))
+		.catch((err) => {
+			console.error("[proxy] metering failed:", err);
+			reconcile(estimate, null);
+		});
+
 	if (result.stream && result.clientStream) {
 		return new Response(result.clientStream, {
 			status: 200,
@@ -382,6 +530,13 @@ app.post("/redeem", async (c) => {
 	if (!config.provisioningKey) {
 		return c.json({ error: "family tier not configured" }, 503);
 	}
+	// Brute-force guard: /redeem is unauthenticated and codes are guessable, so throttle
+	// per IP (sliding window) AND apply an escalating backoff after failed attempts. The
+	// check runs BEFORE any code lookup or sub-key mint.
+	const ip = clientIp(c);
+	if (redeemRateLimited(ip)) {
+		return c.json({ error: "too many attempts — slow down" }, 429);
+	}
 	let body: { code?: unknown };
 	try {
 		body = await c.req.json();
@@ -390,7 +545,10 @@ app.post("/redeem", async (c) => {
 	}
 	const code = typeof body.code === "string" ? body.code.trim() : "";
 	if (!code) return c.json({ error: "missing code" }, 400);
-	if (!db.codeExists(code)) return c.json({ error: "unknown code" }, 404);
+	if (!db.codeExists(code)) {
+		noteRedeemFailure(ip);
+		return c.json({ error: "unknown code" }, 404);
+	}
 
 	// Reserve the code atomically BEFORE the async mint so two concurrent
 	// redemptions can't both succeed; release it if minting fails.
@@ -412,6 +570,7 @@ app.post("/redeem", async (c) => {
 			credit: config.familyLimit,
 			tier: "family",
 		});
+		noteRedeemSuccess(ip);
 		return c.json({ token });
 	} catch (err) {
 		db.releaseCode(code);

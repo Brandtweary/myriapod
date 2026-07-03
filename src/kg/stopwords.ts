@@ -1,5 +1,5 @@
-// NLTK english stopwords (the standard 198-word list). Used in term-index
-// doc-node path decomposition.
+// NLTK english stopwords (the standard 198-word list). Used by the thin-turn
+// content-word guard.
 
 export const NLTK_ENGLISH_STOPWORDS = new Set<string>([
 	"a", "about", "above", "after", "again", "against", "ain", "all", "am", "an",
@@ -24,24 +24,4 @@ export const NLTK_ENGLISH_STOPWORDS = new Set<string>([
 	"while", "who", "whom", "why", "will", "with", "won", "won't", "wouldn",
 	"wouldn't", "y", "you", "you'd", "you'll", "you're", "you've", "your", "yours",
 	"yourself", "yourselves",
-]);
-
-// POS stopwords — content-tagged words that are still noise. Used by
-// the POS-approximating seed filter (we can't POS-tag in the browser, so seed
-// extraction drops everything in POS_STOPWORDS ∪ NLTK english stopwords instead
-// of keeping NN/VB/JJ tags). The apostrophe-prefixed contraction fragments
-// ('s, 'll, …) won't survive our \w+ tokenizer but are kept for parity.
-export const POS_STOPWORDS = new Set<string>([
-	"'d", "'ll", "'m", "'re", "'s", "'ve", "am", "are", "bad", "be", "been",
-	"being", "come", "coming", "did", "do", "does", "get", "go", "going", "good",
-	"got", "had", "has", "have", "i", "is", "know", "let", "n't", "need", "no",
-	"ok", "okay", "right", "said", "say", "sure", "thing", "things", "think",
-	"want", "was", "were", "yeah", "yes",
-]);
-
-// The seed-extraction removal set: union of both. Approximates POS content-word
-// filtering (keep nouns/verbs/adjectives) by instead dropping function words.
-export const SEED_STOPWORDS = new Set<string>([
-	...NLTK_ENGLISH_STOPWORDS,
-	...POS_STOPWORDS,
 ]);

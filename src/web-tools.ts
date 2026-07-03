@@ -20,6 +20,13 @@ export interface WebSearchResult {
 	snippet: string;
 }
 
+// Third-party result fields are rendered through marked→unsafeHTML downstream, so
+// neutralize angle-brackets here (defense-in-depth) — an injected <form>/<a> can't
+// reach the HTML sink even if the renderer's own guards regress.
+function stripAngles(s: unknown): string {
+	return String(s ?? "").replace(/[<>]/g, "");
+}
+
 // Fetch web results through the metering proxy. Throws on a non-OK response or a
 // timeout so the agent loop synthesizes an error result.
 export async function webSearch(
@@ -61,7 +68,7 @@ export function createWebSearchTool(opts: { endpoint: string; getBearer: () => s
 			const text = results.length
 				? results
 						.slice(0, limit)
-						.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${(r.snippet ?? "").slice(0, 200)}`)
+						.map((r, i) => `${i + 1}. **${stripAngles(r.title)}**\n   ${stripAngles(r.url)}\n   ${stripAngles(r.snippet).slice(0, 200)}`)
 						.join("\n\n")
 				: `No web results for "${params.query}".`;
 			return {

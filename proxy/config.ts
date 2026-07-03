@@ -59,6 +59,16 @@ export const config = {
 	// Request limits.
 	maxTokensCap: num("MAX_TOKENS_CAP", 32000),
 	maxInputChars: num("MAX_INPUT_CHARS", 200000),
+	// Conservative $/1M-token ceiling used to pre-reserve credit before forwarding
+	// (the spend-cap reservation) and as the fallback debit when a completion returns
+	// no usage chunk. An upper bound on real per-token price, not the true cost.
+	costCeilPerMToken: num("COST_CEIL_PER_MTOKEN", 8),
+	// Server-side allowlist of model ids the owner-funded paths may request. Comma-
+	// separated; defaults to the single hardcoded frontend model.
+	allowedModels: (process.env.ALLOWED_MODELS ?? "z-ai/glm-5.2")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean),
 	// Hard ceiling on a single upstream (OpenRouter) request, including the streamed
 	// body. Bounds a forward stuck on a dead connection (e.g. the client changed
 	// networks / dropped a VPN mid-stream) so it fails fast instead of hanging.
@@ -76,6 +86,14 @@ export const config = {
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
+	// Direct peers whose X-Forwarded-For header is trusted (the reverse proxy / tunnel
+	// terminating TLS in front of us). Comma-separated peer IPs, or "*" to trust any
+	// peer's XFF. EMPTY (default) → never trust XFF; use the real socket peer. Trusting
+	// XFF blindly lets any client spoof its IP and defeat every per-IP guard.
+	trustedProxies: (process.env.TRUSTED_PROXY ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean),
 	dbPath: process.env.DB_PATH ?? "./myriapod-proxy.db",
 	host: process.env.HOST ?? "0.0.0.0",
 	port: num("PORT", 8790),
@@ -88,4 +106,7 @@ export const config = {
 	voiceInstances: parseVoiceInstances(),
 	voiceInstanceCapacity: num("VOICE_INSTANCE_CAPACITY", 1),
 	voiceHeartbeatSec: num("VOICE_HEARTBEAT_SEC", 60),
+	// Absolute lease lifetime (seconds). A lease is reclaimed once it exceeds this age
+	// REGARDLESS of heartbeats, so a client can't hold an STT slot forever by beating.
+	voiceMaxLeaseSec: num("VOICE_MAX_LEASE_SEC", 1800),
 };

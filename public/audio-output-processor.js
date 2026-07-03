@@ -1,4 +1,5 @@
-// TODO: is there a way to get type-checking on this?
+// AudioWorklet processor: plays paced TTS PCM frames pushed from the main thread,
+// buffered in a bounded FIFO (drops oldest on overflow rather than drifting).
 
 function asMs(samples) {
   return ((samples * 1000) / sampleRate).toFixed(1);

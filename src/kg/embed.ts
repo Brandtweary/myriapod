@@ -24,6 +24,10 @@ export function makeEmbedClient(opts: EmbedClientOpts): EmbedFn {
 					...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
 				},
 				body: JSON.stringify({ inputs: [text] }),
+				// A hung endpoint must not stall the term-write path (the mint tool
+				// awaits this); a timeout throws → the catch below returns null, so
+				// dedup degrades to string-only rather than blocking.
+				signal: AbortSignal.timeout(5000),
 			});
 			if (!res.ok) {
 				dbgWarn(`embed failed (${res.status}) — term carries no embedding`);
