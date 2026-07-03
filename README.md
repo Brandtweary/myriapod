@@ -5,6 +5,8 @@ A voice agent you can talk to, with a memory that stays yours.
 Speak or type, and a personal memory grows out of the conversation — kept in your own browser,
 carried from one visit to the next, always in your hands.
 
+**Live at [myriapod.ai](https://myriapod.ai)** — nothing to install, nothing to run.
+
 ## What it is
 
 - **A voice agent** — you *tap* to record and tap again to send. No voice-activity detection
