@@ -5,7 +5,9 @@ A voice agent you can talk to, with a memory that stays yours.
 Speak or type, and a personal memory grows out of the conversation — kept in your own browser,
 carried from one visit to the next, always in your hands.
 
-**Live at [myriapod.ai](https://myriapod.ai)** — nothing to install, nothing to run.
+**Live at [myriapod.ai](https://myriapod.ai)** — nothing to install, nothing to run. Bring your
+own [OpenRouter](https://openrouter.ai) key and your chats run on your own credits, sent straight
+from your browser.
 
 ## What it is
 
