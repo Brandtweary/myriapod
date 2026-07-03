@@ -83,6 +83,9 @@ export class Db {
 	private sBindIp;
 	private sAddSubscriber;
 	private sListSubscribers;
+	private sTelemetrySessions;
+	private sUniqueIps;
+	private sSpendTodayAll;
 
 	constructor(path: string) {
 		this.db = new Database(path, { create: true });
@@ -164,6 +167,33 @@ export class Db {
 			{ email: string; ip: string | null; created_at: string },
 			[]
 		>("SELECT email, ip, created_at FROM subscribers ORDER BY created_at");
+		this.sTelemetrySessions = this.db.query<
+			{
+				session: string;
+				type: PrincipalType;
+				tier: Tier;
+				created_at: string;
+				ip: string | null;
+				calls: number;
+				credits_used: number;
+				last_activity: string | null;
+			},
+			[]
+		>(
+			`SELECT p.id AS session, p.type, p.tier, p.created_at,
+			   (SELECT a.ip FROM anon_ips a WHERE a.principal_id = p.id LIMIT 1) AS ip,
+			   (SELECT COUNT(*) FROM usage_log u WHERE u.principal_id = p.id) AS calls,
+			   (SELECT COALESCE(SUM(u.cost), 0) FROM usage_log u WHERE u.principal_id = p.id) AS credits_used,
+			   (SELECT MAX(u.ts) FROM usage_log u WHERE u.principal_id = p.id) AS last_activity
+			 FROM principals p
+			 ORDER BY p.created_at DESC`,
+		);
+		this.sUniqueIps = this.db.query<{ n: number }, []>(
+			"SELECT COUNT(DISTINCT ip) AS n FROM anon_ips",
+		);
+		this.sSpendTodayAll = this.db.query<{ total: number }, []>(
+			"SELECT COALESCE(SUM(cost), 0) AS total FROM usage_log WHERE date(ts) = date('now')",
+		);
 	}
 
 	getPrincipal(id: string): Principal | null {
@@ -285,5 +315,56 @@ export class Db {
 	/** Every captured signup, oldest first (read by hand — no newsletter client). */
 	listSubscribers(): { email: string; ip: string | null; created_at: string }[] {
 		return this.sListSubscribers.all();
+	}
+
+	/** Read-only usage telemetry: one row per session (principal) with its origin IP,
+	 *  engagement minutes, metered-call count, and credits spent — plus rollup totals.
+	 *  Derived entirely from principals + anon_ips + usage_log; NO conversation content
+	 *  is stored or returned. "minutes" is the span from a session's mint to its last
+	 *  metered call (0 for a single-shot session). */
+	telemetry(): {
+		generatedAt: string;
+		summary: { sessions: number; uniqueIps: number; spendTodayUsd: number; spendMonthUsd: number };
+		sessions: {
+			session: string;
+			type: PrincipalType;
+			tier: Tier;
+			ip: string | null;
+			createdAt: string;
+			lastActivity: string | null;
+			minutes: number;
+			calls: number;
+			creditsUsedUsd: number;
+		}[];
+	} {
+		const round = (n: number, dp: number) => {
+			const f = 10 ** dp;
+			return Math.round(n * f) / f;
+		};
+		const sessions = this.sTelemetrySessions.all().map((r) => {
+			const start = Date.parse(r.created_at);
+			const end = r.last_activity ? Date.parse(r.last_activity) : start;
+			return {
+				session: r.session,
+				type: r.type,
+				tier: r.tier,
+				ip: r.ip,
+				createdAt: r.created_at,
+				lastActivity: r.last_activity,
+				minutes: round(Math.max(0, end - start) / 60000, 1),
+				calls: r.calls,
+				creditsUsedUsd: round(r.credits_used, 6),
+			};
+		});
+		return {
+			generatedAt: new Date().toISOString(),
+			summary: {
+				sessions: sessions.length,
+				uniqueIps: this.sUniqueIps.get()?.n ?? 0,
+				spendTodayUsd: round(this.sSpendTodayAll.get()?.total ?? 0, 6),
+				spendMonthUsd: round(this.monthlySpend(), 6),
+			},
+			sessions,
+		};
 	}
 }

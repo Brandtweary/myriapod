@@ -6,11 +6,18 @@ import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 export interface MemoryTabCallbacks {
 	isEnabled: () => boolean;
 	setEnabled: (on: boolean) => Promise<void>;
+	onExport: () => void;
+	onImport: (file: File) => Promise<void>;
+	onDelete: () => Promise<void>;
 }
 
-// The Memory tab: turn memory on or off after the initial consent prompt. Off
-// means the pipeline never fires; the existing memory is untouched (back it up
-// from Export). This is the "change your mind later" half of the consent gate.
+// The Memory tab: the single home for memory in Settings — turn it on or off after
+// the initial consent prompt, and export / import / delete the stored lexicon (the
+// whole memory artifact — the term glossary plus speech-adaptation data and
+// conversation summaries; there is nothing else to export). Off means the pipeline
+// never fires; existing memory is untouched. Browser storage can be evicted, so the
+// file export is the real durability story (the framework's PersistentStorageDialog
+// is broken upstream). main.ts supplies the callbacks since the live stores live there.
 export class MemoryTab extends SettingsTab {
 	@state() private enabled = false;
 
@@ -29,52 +36,6 @@ export class MemoryTab extends SettingsTab {
 			await this.cbs.setEnabled(next);
 			this.enabled = next;
 		};
-		return html`
-			<div class="flex flex-col gap-4 p-1">
-				<p class="text-sm text-muted-foreground">
-					Myriapod remembers your conversations as a personal memory, kept only in this browser.
-				</p>
-				<div class="flex items-center gap-3">
-					<button
-						class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80"
-						@click=${toggle}
-					>
-						${this.enabled ? "Turn memory off" : "Turn memory on"}
-					</button>
-					<span class="text-sm text-muted-foreground">
-						Memory is <span class="text-primary">${this.enabled ? "on" : "off"}</span>.
-					</span>
-				</div>
-			</div>
-		`;
-	}
-}
-
-if (!customElements.get("memory-tab")) {
-	customElements.define("memory-tab", MemoryTab);
-}
-
-export interface ExportTabCallbacks {
-	onExport: () => void;
-	onImport: (file: File) => Promise<void>;
-	onDelete: () => Promise<void>;
-}
-
-// Export / import of the lexicon — the whole memory artifact: the term glossary
-// plus the speech-adaptation data and conversation summaries. Browser storage
-// can be evicted, so a file export is the real durability story (the framework's
-// PersistentStorageDialog is broken upstream). main.ts supplies the callbacks
-// since the live stores live there.
-export class ExportTab extends SettingsTab {
-	constructor(private readonly cbs: ExportTabCallbacks) {
-		super();
-	}
-
-	getTabName(): string {
-		return "Export";
-	}
-
-	render(): TemplateResult {
 		const onFile = async (e: Event) => {
 			const input = e.target as HTMLInputElement;
 			const file = input.files?.[0];
@@ -94,8 +55,22 @@ export class ExportTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-4 p-1">
 				<p class="text-sm text-muted-foreground">
-					Save your lexicon — everything Myriapod remembers — to a file you can re-import
-					later or move to another browser.
+					Myriapod remembers your conversations as a personal memory, kept only in this browser.
+				</p>
+				<div class="flex items-center gap-3">
+					<button
+						class="rounded border border-primary px-3 py-1.5 text-sm text-primary hover:opacity-80"
+						@click=${toggle}
+					>
+						${this.enabled ? "Turn memory off" : "Turn memory on"}
+					</button>
+					<span class="text-sm text-muted-foreground">
+						Memory is <span class="text-primary">${this.enabled ? "on" : "off"}</span>.
+					</span>
+				</div>
+				<hr class="border-border" />
+				<p class="text-sm text-muted-foreground">
+					Save your memory to a file you can re-import later or move to another browser.
 				</p>
 				<div class="flex flex-wrap gap-3">
 					<button
@@ -122,8 +97,8 @@ export class ExportTab extends SettingsTab {
 	}
 }
 
-if (!customElements.get("export-tab")) {
-	customElements.define("export-tab", ExportTab);
+if (!customElements.get("memory-tab")) {
+	customElements.define("memory-tab", MemoryTab);
 }
 
 // The Access tab: bring your own OpenRouter key, plus a quiet, discrete section to

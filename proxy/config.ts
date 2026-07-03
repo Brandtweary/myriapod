@@ -45,6 +45,11 @@ export const config = {
 	provisioningKey: process.env.OPENROUTER_PROVISIONING_KEY ?? "",
 	familyLimit: num("FAMILY_LIMIT", 100),
 
+	// Bearer token gating the read-only /admin/telemetry endpoint. Empty (default)
+	// → the endpoint is disabled (404), so an unconfigured deploy never exposes it.
+	// Set ADMIN_TOKEN in prod to enable read-only usage stats (no chat content).
+	adminToken: process.env.ADMIN_TOKEN ?? "",
+
 	// Free tier.
 	freeGrant: num("FREE_GRANT_USD", 10),
 	freeDailyCap: num("FREE_DAILY_CAP_USD", 50),

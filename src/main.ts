@@ -41,7 +41,7 @@ import {
 } from "./myriapod-model.js";
 import readmeDoc from "../README.md?raw";
 import aboutDoc from "../about.md?raw";
-import { ExportTab, MemoryTab, OpenRouterKeyTab } from "./settings.js";
+import { MemoryTab, OpenRouterKeyTab } from "./settings.js";
 import { showGrantModal } from "./grant-modal.js";
 import { load as loadBotd } from "@fingerprintjs/botd";
 import { dbg, dbgError, dbgWarn, installInstrumentation, summarizeMessages } from "./debug.js";
@@ -354,8 +354,8 @@ async function ensureAnonGrant(): Promise<void> {
 
 // Open the settings dialog. Tab order is deliberate: Access first (own OpenRouter
 // key + family-code redemption + hosted-balance readout) — the top reason anyone
-// opens Settings — then Memory (consent toggle), then Export (lexicon backup/restore).
-// Async so the Access tab is built with the currently-stored key.
+// opens Settings — then Memory (consent toggle + lexicon export/import/delete, the
+// whole memory artifact in one place). Async so Access is built with the stored key.
 const openSettings = async () => {
 	const currentKey = (await providerKeys.get("openrouter")) ?? "";
 	SettingsDialog.open([
@@ -371,8 +371,6 @@ const openSettings = async () => {
 		new MemoryTab({
 			isEnabled: () => memoryConsent === "granted",
 			setEnabled: (on) => setMemoryConsent(on ? "granted" : "declined"),
-		}),
-		new ExportTab({
 			onExport: downloadLexicon,
 			onImport: importLexiconFromFile,
 			onDelete: deleteLexicon,
@@ -1346,8 +1344,13 @@ async function handleSubscribe(e: Event): Promise<void> {
 
 const renderAbout = () => html`
 	<div class="flex-1 overflow-y-auto">
-		<div class="cw-about max-w-2xl mx-auto px-6 py-10">
-			${unsafeHTML(marked.parse(aboutDoc) as string)}
+		<div class="cw-about max-w-2xl mx-auto px-6 pt-4 pb-10">
+			${unsafeHTML(
+				(marked.parse(aboutDoc) as string).replace(
+					/<a href="(https?:\/\/)/g,
+					'<a target="_blank" rel="noreferrer" href="$1',
+				),
+			)}
 			<form class="cw-signup" @submit=${handleSubscribe}>
 				<input
 					class="cw-signup-input"

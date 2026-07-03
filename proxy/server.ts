@@ -105,6 +105,16 @@ app.get("/balance", (c) => {
 	return c.json({ tier: "free", remaining: config.freeGrant, grant: config.freeGrant });
 });
 
+// Read-only usage telemetry: sessions, origin IPs, engagement minutes, credits —
+// NO conversation content, ever. Bearer-gated by config.adminToken; when that's
+// unset the route 404s, so an unconfigured deploy never exposes it. Purpose is
+// operational visibility (is anyone using it? is a bot draining the owner key?).
+app.get("/admin/telemetry", (c) => {
+	if (!config.adminToken) return c.notFound();
+	if (bearerOf(c) !== config.adminToken) return c.json({ error: "unauthorized" }, 401);
+	return c.json(db.telemetry());
+});
+
 // In-memory per-IP sliding-window rate limit for the open web-search proxy. Web
 // search is table-stakes for every visitor (own-key included), so the endpoint is
 // NOT principal-gated — CORS already scopes browser callers to the site, and this

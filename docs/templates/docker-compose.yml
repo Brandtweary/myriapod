@@ -22,6 +22,10 @@ services:
       # distil-large-v3 is a fast, accurate default. Any faster-whisper model works.
       WHISPER__MODEL: distil-large-v3
       WHISPER__INFERENCE_DEVICE: cuda
+      # Keep the model resident. The default TTL (300s) unloads the model when idle,
+      # so the first request after a quiet spell pays a slow cold reload (tens of
+      # seconds) and the client may time out. -1 = never unload.
+      WHISPER__TTL: "-1"
     ports:
       - "8000:8000"   # container serves the OpenAI API on 8000
     deploy:

@@ -454,6 +454,10 @@ agent-interface .shrink-0 > .max-w-3xl.px-2 > .h-5 {
 .cw-about p {
 	margin: 0.9rem 0;
 }
+/* First rendered block sits snug under the top padding — no extra leading gap. */
+.cw-about > :first-child {
+	margin-top: 0;
+}
 .cw-about strong {
 	color: var(--foreground);
 	font-weight: 700;
