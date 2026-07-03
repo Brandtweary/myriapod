@@ -1,4 +1,3 @@
-
 It is not until the hammer breaks that you perceive it as a separate object to yourself. This is *zuhandenheit*, as coined by Martin Heidegger, roughly translated as "readiness to hand". The less aware you are of a tool, the more effective it is at its job. The concept applies beautifully to artificial intelligence and computers more broadly, which feel magical when they work and excruciating when they don't. 
 
 Based on this principle, it may seem at first like the trend towards more autonomous AI is the right direction; after all, what could be more frictionless than an AI agent churning away on some distant server that you never look at? But when that agent inevitably makes a mistake, who feels the breakage and suffers for it? The AI won't, but you will, and the feedback loop is slower than if you had a proper interface for monitoring the agent's work. We're basically inventing hammers that break in increasingly silent and mysterious ways.

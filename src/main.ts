@@ -352,16 +352,13 @@ async function ensureAnonGrant(): Promise<void> {
 	}
 }
 
-// Open the settings dialog: Memory (consent toggle), Access (own OpenRouter key +
-// family-code redemption + hosted-balance readout), and Export (personal-graph
-// backup/restore). Async so the Access tab is built with the currently-stored key.
+// Open the settings dialog. Tab order is deliberate: Access first (own OpenRouter
+// key + family-code redemption + hosted-balance readout) — the top reason anyone
+// opens Settings — then Memory (consent toggle), then Export (lexicon backup/restore).
+// Async so the Access tab is built with the currently-stored key.
 const openSettings = async () => {
 	const currentKey = (await providerKeys.get("openrouter")) ?? "";
 	SettingsDialog.open([
-		new MemoryTab({
-			isEnabled: () => memoryConsent === "granted",
-			setEnabled: (on) => setMemoryConsent(on ? "granted" : "declined"),
-		}),
 		new OpenRouterKeyTab({
 			currentKey,
 			onSaveKey: async (key: string) => {
@@ -370,6 +367,10 @@ const openSettings = async () => {
 			},
 			onRedeem: redeemFamilyCode,
 			getBalance: fetchHostedBalance,
+		}),
+		new MemoryTab({
+			isEnabled: () => memoryConsent === "granted",
+			setEnabled: (on) => setMemoryConsent(on ? "granted" : "declined"),
 		}),
 		new ExportTab({
 			onExport: downloadLexicon,
