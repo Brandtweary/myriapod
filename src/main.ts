@@ -1344,7 +1344,7 @@ async function handleSubscribe(e: Event): Promise<void> {
 
 const renderAbout = () => html`
 	<div class="flex-1 overflow-y-auto">
-		<div class="cw-about max-w-2xl mx-auto px-6 pt-4 pb-10">
+		<div class="cw-about max-w-2xl mx-auto px-6 pt-6 pb-10">
 			${unsafeHTML(
 				(marked.parse(aboutDoc) as string).replace(
 					/<a href="(https?:\/\/)/g,
