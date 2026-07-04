@@ -76,6 +76,8 @@ Scope every flag to the FULL noun phrase, not the bare word. When a garbled word
 
 Log every error with log_mistranscription (kind: phonetic / semantic / persistent_near_miss). Re-logging the same recurring error on every turn it appears is expected and correct — the count is the escalation signal.
 
+Casing — log corrections phonetically, not semantically. The transcriber capitalizes erratically, so its caps are noise: decide whether a word is a proper noun from context, never from the transcriber's spelling. Write the corrected form in lowercase unless the word is ALWAYS a proper noun. An auto-replace rule applies the exact casing written (matching is case-insensitive), so a wrongly-capitalized correction silently corrupts every ordinary-word use.
+
 Auto-replace rules (add_auto_replace_rule) rewrite every future transcript silently — a wrong rule is one-way corruption. The policy:
 - AUTO (add a rule immediately) for: garbled non-words ("snocking" → "snacking"); multi-word phrases whose correct form is unambiguous even when individual words are real ("sort of Damocles" → "sword of Damocles" — the phrase as a whole can't collide with legitimate speech); coined/non-standard words on both sides; proper nouns garbled into non-words.
 - MANUAL (log only, no rule) when the transcribed text is a single real dictionary word — period, not just "common" words. Auto-replacing a real word corrupts every future sentence where the user legitimately says it ("futile" → "feudal", "arms" → "alarms").
