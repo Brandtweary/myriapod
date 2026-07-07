@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
 
@@ -78,6 +79,16 @@ function cspPlugin(): Plugin {
 
 export default defineConfig({
 	plugins: [tailwindcss(), debugLogPlugin(), cspPlugin()],
+	resolve: {
+		alias: {
+			// pi-ai bundles a multi-provider SDK; myriapod only drives OpenRouter, so
+			// the Mistral provider (dynamically imported, never invoked) is dead weight
+			// that also pulls OpenTelemetry into the build. Alias it to an inert stub so
+			// the real SDK + both @opentelemetry/* shims drop out of the bundle. See
+			// stubs/mistralai.ts.
+			"@mistralai/mistralai": fileURLToPath(new URL("./stubs/mistralai.ts", import.meta.url)),
+		},
+	},
 	server: {
 		watch: {
 			// Don't let edits to docs/notes living in the repo root (e.g. the

@@ -19,11 +19,10 @@
     "lit": "^3.3.1",
     "lucide": "^0.544.0",
     "marked": "^18.0.5",
-    "stemmer": "^2.0.1"
+    "stemmer": "^2.0.1",
+    "typebox": "^1.2.16"
   },
   "devDependencies": {
-    "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/semantic-conventions": "^1.41.1",
     "@tailwindcss/vite": "^4.1.17",
     "tsx": "^4.22.4",
     "typescript": "^5.7.3",
