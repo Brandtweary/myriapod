@@ -58,6 +58,16 @@ export interface ActivityItem {
 
 export type PipelineAgentName = "audit" | "memory" | "summary";
 
+// One tick's inputs, captured at TRIGGER time (turn end), never re-read at run time.
+// The messages snapshot + sessionKey are frozen when the turn ends so a tick that runs
+// after a New Chat / loadSession still summarizes ITS OWN conversation and writes under
+// ITS OWN running-context key — not whatever conversation happens to be live when it runs.
+interface TickInput {
+	messages: AgentMessage[];
+	isVoiceTurn: boolean;
+	sessionKey: string;
+}
+
 // The async pipeline agents THINK — unlike the frontend chat agent (thinking off
 // for spoken snappiness), these run in the background where latency is free, so
 // they reason for quality (the whole point of moving the memory workload async).
@@ -68,6 +78,7 @@ export type PipelineAgentName = "audit" | "memory" | "summary";
 const PIPELINE_THINKING = "high" as const;
 
 const BUFFER_MAX_ENTRIES = 30; // per agent, rolling
+const FLAGS_MAX_ENTRIES = 100; // review-flags store, rolling (was unbounded → grew forever)
 const RUNNING_CONTEXT_MAX_WORDS = 8000; // rolling cap across entries
 const ACTIVITY_MAX_ITEMS = 100; // in-memory feed cap
 const AGENT_MAX_TURNS = 12; // runaway-loop backstop per tooled agent
@@ -156,7 +167,7 @@ export class PipelineRuntime {
 	readonly activity: ActivityItem[] = [];
 
 	private running = false;
-	private queued: { getMessages: () => AgentMessage[]; isVoiceTurn: boolean } | null = null;
+	private queued: TickInput | null = null;
 
 	constructor(deps: PipelineDeps) {
 		this.deps = deps;
@@ -195,6 +206,33 @@ export class PipelineRuntime {
 		this.sessionKey = crypto.randomUUID();
 	}
 
+	/** Wipe the pipeline's conversation-derived state: the per-agent action buffers,
+	 *  the review-flags store, and the live activity feed. Paired with the lexicon
+	 *  delete (Settings → delete memory) so a memory wipe leaves no shadow copy of
+	 *  conversation content in IndexedDB — the buffers + flags both hold verbatim
+	 *  transcript-derived text and are re-injected into future pipeline prompts. */
+	async reset(): Promise<void> {
+		this.buffers = { audit: [], memory: [], summary: [] };
+		this.flags = [];
+		this.activity.length = 0;
+		await this.persist();
+		this.deps.onActivity();
+	}
+
+	/** Append a review flag, rolling-capped so the store can't grow without bound. */
+	private addFlag(f: ReviewFlag): void {
+		this.flags.push(f);
+		if (this.flags.length > FLAGS_MAX_ENTRIES) {
+			this.flags = this.flags.slice(-FLAGS_MAX_ENTRIES);
+		}
+	}
+
+	/** The human-review flags the audit agent raised, newest first — surfaced in the
+	 *  Memory settings tab so they're not a write-only store nobody ever reads. */
+	getFlags(): ReviewFlag[] {
+		return [...this.flags].reverse();
+	}
+
 	getSttLexicon(): SttLexicon {
 		return this.sttLexicon;
 	}
@@ -225,13 +263,20 @@ export class PipelineRuntime {
 	}
 
 	/** The per-turn trigger. Coalesces: a turn ending mid-tick queues exactly one
-	 *  follow-up tick, which reads the LATEST transcript when it runs. */
+	 *  follow-up tick (the most recent turn-end wins). The transcript + sessionKey are
+	 *  SNAPSHOTTED here, at trigger time — not re-read when the tick runs — so a tick
+	 *  can never bind to a conversation the user switched to after this turn ended. */
 	onTurnEnd(getMessages: () => AgentMessage[], isVoiceTurn: boolean): void {
+		const input: TickInput = {
+			messages: [...getMessages()],
+			isVoiceTurn,
+			sessionKey: this.sessionKey,
+		};
 		if (this.running) {
-			this.queued = { getMessages, isVoiceTurn };
+			this.queued = input;
 			return;
 		}
-		this.tick(getMessages, isVoiceTurn).catch((e) => dbgError("pipeline tick failed:", e));
+		this.tick(input).catch((e) => dbgError("pipeline tick failed:", e));
 	}
 
 	async persist(): Promise<void> {
@@ -288,7 +333,7 @@ export class PipelineRuntime {
 			getGraph: this.deps.getGraph,
 			embed: this.deps.embed,
 			getSttLexicon: () => this.sttLexicon,
-			addFlag: (f) => this.flags.push(f),
+			addFlag: (f) => this.addFlag(f),
 			record: (line) => {
 				actions.push(line);
 				this.pushActivity(name, line);
@@ -347,8 +392,8 @@ export class PipelineRuntime {
 		}
 	}
 
-	private async runSummaryAgent(transcript: string): Promise<void> {
-		const prior = this.runningContext.filter((e) => e.sessionKey !== this.sessionKey);
+	private async runSummaryAgent(transcript: string, sessionKey: string): Promise<void> {
+		const prior = this.runningContext.filter((e) => e.sessionKey !== sessionKey);
 		const priorBlock = prior.length
 			? prior.map((e) => `### ${e.ts.slice(0, 10)}\n${e.text}`).join("\n\n")
 			: "(no prior conversations yet)";
@@ -388,12 +433,12 @@ export class PipelineRuntime {
 
 		// Rewrite-not-append: replace this session's entry, newest first.
 		const now = new Date().toISOString();
-		const existing = this.runningContext.find((e) => e.sessionKey === this.sessionKey);
+		const existing = this.runningContext.find((e) => e.sessionKey === sessionKey);
 		if (existing) {
 			existing.text = entry;
 			existing.ts = now;
 		} else {
-			this.runningContext.unshift({ sessionKey: this.sessionKey, ts: now, text: entry });
+			this.runningContext.unshift({ sessionKey, ts: now, text: entry });
 		}
 		// Rolling word cap: keep newest entries until the budget is spent.
 		let words = 0;
@@ -407,7 +452,8 @@ export class PipelineRuntime {
 		this.pushActivity("summary", "updated conversation summary");
 	}
 
-	private async tick(getMessages: () => AgentMessage[], isVoiceTurn: boolean): Promise<void> {
+	private async tick(input: TickInput): Promise<void> {
+		const { isVoiceTurn } = input;
 		const tickStart = performance.now();
 		// running + the state repaint go INSIDE the try: if onStateChange throws (it
 		// drives a DOM refresh), the finally still resets running, so a repaint fault
@@ -415,11 +461,13 @@ export class PipelineRuntime {
 		this.running = true;
 		try {
 			this.deps.onStateChange("running");
-			const transcript = formatTranscript(getMessages());
+			const transcript = formatTranscript(input.messages);
 			if (!transcript.trim()) return;
 
-			// Summary runs in parallel with the serial audit → memory pair.
-			const summaryP = this.runSummaryAgent(transcript).catch((err) =>
+			// Summary runs in parallel with the serial audit → memory pair. It writes under
+			// the tick's captured sessionKey (not the live one) so a New Chat mid-tick can't
+			// misattribute this conversation's summary.
+			const summaryP = this.runSummaryAgent(transcript, input.sessionKey).catch((err) =>
 				dbgError("pipeline[summary] failed (non-fatal):", err),
 			);
 
@@ -472,9 +520,7 @@ export class PipelineRuntime {
 				dbgError("pipeline onStateChange(idle) failed:", err);
 			}
 			if (q) {
-				this.tick(q.getMessages, q.isVoiceTurn).catch((e) =>
-					dbgError("pipeline tick failed:", e),
-				);
+				this.tick(q).catch((e) => dbgError("pipeline tick failed:", e));
 			}
 		}
 	}

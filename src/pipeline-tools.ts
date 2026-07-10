@@ -15,6 +15,10 @@ import {
 	mistranscriptionCount,
 } from "./stt-lexicon.js";
 
+// Rolling cap on the mistranscription log: it appends per voice turn and rides the
+// lexicon export blob, so an uncapped log would bloat both IndexedDB and every export.
+const MISTRANSCRIPTION_LOG_MAX = 500;
+
 export interface ReviewFlag {
 	kind: string;
 	label?: string;
@@ -304,6 +308,9 @@ export function createPipelineTools(deps: PipelineToolDeps): AgentTool<any>[] {
 					notes: p.notes,
 					ts: new Date().toISOString(),
 				});
+				if (lex.mistranscriptions.length > MISTRANSCRIPTION_LOG_MAX) {
+					lex.mistranscriptions = lex.mistranscriptions.slice(-MISTRANSCRIPTION_LOG_MAX);
+				}
 				const count = mistranscriptionCount(lex, p.spoken, p.transcribed);
 				record(`logged STT: ${p.transcribed} → ${p.spoken} (${p.kind}, seen ${count}×)`);
 				return text(

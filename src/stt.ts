@@ -31,6 +31,18 @@ const DEFAULT_STT_URL =
 // auth sets VITE_STT_AUTH.
 const DEFAULT_STT_AUTH: string | undefined = import.meta.env.VITE_STT_AUTH;
 
+// Mic capture constraints — mono, echo-cancelled (this drives a speaker-based
+// conversation), no noise suppression, with AGC. The stream is actually acquired in
+// voice.ts's getUserMedia (the transport seam hands PcmRecorder a ready stream), so
+// these must live where that call is; exported as the single source of truth and also
+// applied by PcmRecorder's own-stream fallback path.
+export const MIC_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+	echoCancellation: true,
+	noiseSuppression: false,
+	autoGainControl: true,
+	channelCount: 1,
+};
+
 // The recorder emits 24kHz f32 mono PCM (PART 1 resamples to this rate).
 const STT_SAMPLE_RATE = 24000;
 // Whisper expects 16kHz mono 16-bit PCM; we resample down before encoding the WAV.
@@ -192,12 +204,7 @@ export class PcmRecorder {
 			this.ownsStream = false;
 		} else {
 			this.stream = await navigator.mediaDevices.getUserMedia({
-				audio: {
-					echoCancellation: true,
-					noiseSuppression: false,
-					autoGainControl: true,
-					channelCount: 1,
-				},
+				audio: MIC_AUDIO_CONSTRAINTS,
 				video: false,
 			});
 			this.ownsStream = true;
@@ -243,7 +250,14 @@ export class PcmRecorder {
 	 * Tears down the audio graph; stops the mic only if this recorder opened it.
 	 */
 	async stop(): Promise<Float32Array> {
-		if (!this.running) return new Float32Array(0);
+		if (!this.running) {
+			// Not recording, but start() may have partially built the audio graph (a
+			// fast mic double-toggle can land stop() mid-start()). Always tear down so a
+			// half-built AudioContext/worklet is never orphaned — browsers cap live
+			// AudioContexts, and leaked ones eventually kill voice entirely.
+			this.teardown();
+			return new Float32Array(0);
+		}
 
 		// Worklet chunks already posted but not yet dispatched to onmessage would be
 		// dropped by its `if (!this.running) return` guard if we flipped running now,

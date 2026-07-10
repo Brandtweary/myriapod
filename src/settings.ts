@@ -2,6 +2,7 @@ import { SettingsTab } from "@earendil-works/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
+import type { ReviewFlag } from "./pipeline-tools.js";
 
 export interface MemoryTabCallbacks {
 	isEnabled: () => boolean;
@@ -9,6 +10,9 @@ export interface MemoryTabCallbacks {
 	onExport: () => void;
 	onImport: (file: File) => Promise<void>;
 	onDelete: () => Promise<void>;
+	// The audit agent's human-review flags (newest first), surfaced read-only so the
+	// store isn't write-only. Empty array when there's nothing flagged.
+	getFlags: () => ReviewFlag[];
 }
 
 // The Memory tab: the single home for memory in Settings — turn it on or off after
@@ -92,7 +96,28 @@ export class MemoryTab extends SettingsTab {
 						Delete
 					</button>
 				</div>
+				${this.renderFlags()}
 			</div>
+		`;
+	}
+
+	// Read-only view of the audit agent's human-review flags (lexicon colonization, an
+	// LLM misspelling habit, a split too tangled to automate). Hidden when there are none.
+	private renderFlags(): TemplateResult | null {
+		const flags = this.cbs.getFlags();
+		if (!flags.length) return null;
+		return html`
+			<hr class="border-border" />
+			<p class="text-sm text-muted-foreground">
+				Flagged for your review (${flags.length}) — memory issues the pipeline left for a human:
+			</p>
+			<ul class="flex flex-col gap-1.5">
+				${flags.map(
+					(f) => html`<li class="text-xs text-muted-foreground">
+						<span class="text-primary">${f.kind}</span>${f.label ? html` · ${f.label}` : ""}: ${f.description}
+					</li>`,
+				)}
+			</ul>
 		`;
 	}
 }

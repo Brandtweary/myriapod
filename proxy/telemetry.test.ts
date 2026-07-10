@@ -20,7 +20,11 @@ test("telemetry reports one row per session with ip, calls, and credits", () => 
 	expect(t.summary.spendTodayUsd).toBeCloseTo(0.004, 6);
 
 	const row = t.sessions[0]!;
-	expect(row.session).toBe("tok-a");
+	// The session label is a sha256-derived hex digest, never the raw bearer token.
+	expect(row.session).toMatch(/^[0-9a-f]{12}$/);
+	expect(row.session).not.toBe("tok-a");
+	// Stable per principal — the same token hashes to the same label.
+	expect(db.telemetry().sessions[0]!.session).toBe(row.session);
 	expect(row.ip).toBe("203.0.113.7");
 	expect(row.calls).toBe(1);
 	expect(row.creditsUsedUsd).toBeCloseTo(0.004, 6);
@@ -40,6 +44,10 @@ test("telemetry sums spend across sessions and never invents rows", () => {
 	// No IPs bound → nothing invented.
 	expect(t.summary.uniqueIps).toBe(0);
 	expect(t.sessions.every((s) => s.ip === null)).toBe(true);
+	// Every session label is a 12-char hex digest, never the raw token, and distinct per principal.
+	expect(t.sessions.every((s) => /^[0-9a-f]{12}$/.test(s.session))).toBe(true);
+	expect(t.sessions.every((s) => s.session !== "a" && s.session !== "b")).toBe(true);
+	expect(new Set(t.sessions.map((s) => s.session)).size).toBe(t.sessions.length);
 });
 
 test("telemetry is empty on a fresh db", () => {

@@ -84,7 +84,14 @@ function clientIp(c: Context): string {
 		const trusted = config.trustedProxies.includes("*") || config.trustedProxies.includes(peer);
 		if (trusted) {
 			const xff = c.req.header("x-forwarded-for");
-			if (xff) return xff.split(",")[0]!.trim();
+			if (xff) {
+				// The trusted proxy APPENDS the real peer as the RIGHTMOST entry; anything to
+				// its left is client-supplied and spoofable. With a single trusted hop (the TLS
+				// terminator), the last entry is the real client. Never read the leftmost — that
+				// is exactly what a spoofed X-Forwarded-For controls.
+				const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+				if (parts.length) return parts[parts.length - 1]!;
+			}
 		}
 	}
 	return peer;

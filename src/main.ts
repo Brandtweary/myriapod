@@ -374,6 +374,7 @@ const openSettings = async () => {
 			onExport: downloadLexicon,
 			onImport: importLexiconFromFile,
 			onDelete: deleteLexicon,
+			getFlags: () => pipeline?.getFlags() ?? [],
 		}),
 	]);
 };
@@ -558,10 +559,30 @@ ${readmeDoc}`;
 // MessageList to re-render. requestUpdate() then re-runs renderMessages with the
 // new reference. (Also fixes the stuck stop button: a post-finishRun repaint
 // re-renders the editor with isStreaming=false.)
+// Assistant-authored markdown can carry links, and mini-lit's MarkdownBlock renders
+// them via unsafeHTML with NO href-scheme check — so a model-emitted
+// `[label](javascript:…)` would reach the DOM as a live XSS vector (the app feeds the
+// model third-party web-search text it doesn't control). MarkdownBlock bundles its own
+// marked instance we can't hook, and renders into light DOM, so sanitize at the DOM:
+// strip the href from any chat anchor whose scheme isn't http(s)/mailto.
+const SAFE_HREF_SCHEME = /^(https?:|mailto:)/i;
+const sanitizeChatAnchors = () => {
+	if (!chatPanel) return;
+	for (const a of chatPanel.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+		const href = (a.getAttribute("href") ?? "").trim();
+		if (href && !SAFE_HREF_SCHEME.test(href)) {
+			a.removeAttribute("href");
+			a.removeAttribute("target");
+		}
+	}
+};
+
 const forceChatRepaint = () => {
 	if (!agent || !chatPanel?.agentInterface) return;
 	agent.state.messages = [...agent.state.messages];
 	chatPanel.agentInterface.requestUpdate();
+	// Scrub dangerous link hrefs after Lit commits the DOM (see sanitizeChatAnchors).
+	requestAnimationFrame(sanitizeChatAnchors);
 };
 
 // The chat panel is mounted once and lives OUTSIDE the reactive render root, so
@@ -611,6 +632,12 @@ const saveSession = async () => {
 	if (!shouldSaveSession(state.messages)) return;
 
 	try {
+		// Preserve the original createdAt across re-saves — saveSession runs on every
+		// terminal event, so stamping a fresh createdAt each time would keep resetting the
+		// session's birth time (breaking chat-list ordering). First save → mint it.
+		const existingMeta = await storage.sessions.getMetadata(currentSessionId).catch(() => null);
+		const createdAt = existingMeta?.createdAt ?? new Date().toISOString();
+
 		// Create session data
 		const sessionData = {
 			id: currentSessionId,
@@ -618,7 +645,7 @@ const saveSession = async () => {
 			model: state.model!,
 			thinkingLevel: state.thinkingLevel,
 			messages: state.messages,
-			createdAt: new Date().toISOString(),
+			createdAt,
 			lastModified: new Date().toISOString(),
 		};
 
@@ -812,8 +839,12 @@ async function deleteLexicon(): Promise<void> {
 	userGraph = Graph.empty();
 	pipeline.setSttLexicon(emptySttLexicon());
 	pipeline.setRunningContext([]);
+	// Also clear the per-agent action buffers + review-flags store (both hold verbatim
+	// conversation-derived text and get re-injected into future pipeline prompts) — a
+	// delete that spared them would leave a shadow copy of the "deleted" conversations.
+	// reset() persists the pipeline store itself.
+	await pipeline.reset();
 	await saveUserGraph();
-	await pipeline.persist();
 	updateGutters({ terms: [] });
 	dbg("lexicon deleted (reset to empty)");
 }
@@ -983,6 +1014,16 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		input: unknown,
 		...rest: unknown[]
 	) => {
+		// Re-entrancy guard, BEFORE mutating any turn globals. The wrapper awaits up to ~60s
+		// (compaction + the grant modal) before origPrompt flips isStreaming, so a second send
+		// can race into this window. The loser must not append its own memory-context
+		// breadcrumb + ledger entries or stamp inFlightVoiceTurn. Throw (not return) so the
+		// caller's .catch runs — a losing VOICE send resets its speak gate there, so it can't
+		// leave voiceTurnSpeaking stuck true and get the next typed run spoken aloud.
+		if (runInFlight) {
+			dbgWarn("prompt() re-entered while a run is already in flight — dropping the racing send");
+			throw new Error("a run is already in flight");
+		}
 		// Bracket the run: a run is now in flight (gates onStop's barge-in send), and stamp
 		// it with this turn's voice id if it's a voice turn (onStop set voiceTurnSpeaking +
 		// bumped voiceTurnSeq before calling us) so agent_end retires the right turn. Cleared
@@ -1018,7 +1059,6 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				}
 				if (cut > 0 && cut < msgs.length) {
 					const toSummarize = msgs.slice(0, cut);
-					const kept = msgs.slice(cut);
 					const COMPACTION_TIMEOUT = Symbol("compaction-timeout");
 					const summaryRes = await Promise.race([
 						generateSummary(
@@ -1034,12 +1074,17 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 					if (summaryRes === COMPACTION_TIMEOUT) {
 						dbgError("compaction generateSummary timed out (turn proceeds uncompacted)");
 					} else if (summaryRes.ok) {
+						// Re-derive the kept tail from the LIVE array: a concurrent append (e.g. a
+						// voice-pending placeholder) may have landed during the summary await, and the
+						// stale pre-await snapshot would silently drop it. Only appends happen during the
+						// await, so index `cut` still marks the same boundary.
+						const liveKept = agent.state.messages.slice(cut);
 						agent.state.messages = [
 							createCompactionSummaryMessage(summaryRes.value, est.tokens, new Date().toISOString()),
-							...kept,
+							...liveKept,
 						];
 						forceChatRepaint();
-						dbg(`compaction: summarized ${toSummarize.length} msgs, kept ${kept.length} (~${est.tokens} ctx tok)`);
+						dbg(`compaction: summarized ${toSummarize.length} msgs, kept ${liveKept.length} (~${est.tokens} ctx tok)`);
 					} else {
 						dbgError("compaction generateSummary failed (turn proceeds uncompacted):", summaryRes.error);
 					}
@@ -1065,6 +1110,10 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				// Retrieval runs over the per-browser term memory (the user's own).
 				const userR = retrieve(userGraph, ledger, userText, agentText);
 				updateGutters({ terms: userR.vacuum.terms });
+				// Retrieval fired hit_count/last_fired on the matched terms (see retrieveVacuum);
+				// persist so the bumped counts survive a reload. Fire-and-forget — the send
+				// must not wait on the IndexedDB write.
+				if (userR.vacuum.terms.length) void saveUserGraph();
 				if (userR.injectionBlock) {
 					agent.state.messages = [...agent.state.messages, createMemoryContextMessage(userR.injectionBlock)];
 				}
@@ -1602,6 +1651,19 @@ async function initApp() {
 		window.setTimeout(() => el.remove(), 4000);
 	};
 
+	// Drop text into the chat composer (the editor's textarea), appending to whatever's
+	// already there. Best-effort: returns false if the textarea isn't found, so the caller
+	// can fall back to a toast. Dispatches an input event so the editor's own state tracks it.
+	const fillComposer = (textToInsert: string): boolean => {
+		const ta = document.querySelector<HTMLTextAreaElement>("message-editor textarea");
+		if (!ta) return false;
+		const existing = ta.value.trim();
+		ta.value = existing ? `${existing} ${textToInsert}` : textToInsert;
+		ta.dispatchEvent(new Event("input", { bubbles: true }));
+		ta.focus();
+		return true;
+	};
+
 	const stopVoiceHeartbeat = () => {
 		if (voiceHeartbeatTimer !== null) {
 			clearInterval(voiceHeartbeatTimer);
@@ -1807,13 +1869,26 @@ async function initApp() {
 					// turn's speak state. The barge-in already cut the audio (cutVoiceAudio in
 					// onStart); drop this send rather than corrupt the in-flight turn.
 					if (runInFlight) {
-						dbgWarn("voice barge-in while a run is in flight — send skipped");
+						// The user paid for this STT, so never silently drop it: park the transcript
+						// in the composer (fall back to a toast if the editor textarea isn't found) so
+						// they can send it once the current reply finishes.
+						dbgWarn("voice barge-in while a run is in flight — transcript parked, not sent");
+						if (!fillComposer(transcript)) {
+							showVoiceToast(`Heard while replying: "${transcript}"`);
+						}
 						return; // finally still runs dropPlaceholder (already dropped — idempotent)
 					}
 					voiceTurnSeq++; // stamp this turn so its agent_end retires the right speak state
 					voiceTurnSpeaking = true; // gate: this turn's reply speaks, incl. the post-tool final answer (see TTS tap)
 					voiceTurnCut = false; // fresh turn — clear any prior barge-in guard
-					void agent.prompt(transcript).catch((err) => dbgError("voice agent.prompt failed:", err));
+					void agent.prompt(transcript).catch((err) => {
+						dbgError("voice agent.prompt failed:", err);
+						// A voice send that errors before reaching agent_end (e.g. the re-entrancy
+						// guard threw) never retires its speak gate the normal way. Reset it here so
+						// the NEXT turn isn't spoken aloud — but only if the in-flight winner is a
+						// typed run (inFlightVoiceTurn === null); a concurrent voice turn owns the gate.
+						if (inFlightVoiceTurn === null) voiceTurnSpeaking = false;
+					});
 				}
 			} finally {
 				dropPlaceholder(); // safety net: every early-return / error path lands here

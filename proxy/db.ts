@@ -9,6 +9,14 @@
 // so there's no counter to drift out of sync.
 
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
+
+/** Stable, non-reversible per-session label for telemetry. The principal id IS the
+ *  bearer/spend token, so it must never appear in a readout — hash it to a short hex
+ *  digest that stays distinct per principal but is useless as a credential. */
+function sessionLabel(id: string): string {
+	return createHash("sha256").update(id).digest("hex").slice(0, 12);
+}
 
 export type PrincipalType = "anon" | "token";
 export type Tier = "free" | "family";
@@ -345,7 +353,7 @@ export class Db {
 			const start = Date.parse(r.created_at);
 			const end = r.last_activity ? Date.parse(r.last_activity) : start;
 			return {
-				session: r.session,
+				session: sessionLabel(r.session),
 				type: r.type,
 				tier: r.tier,
 				ip: r.ip,

@@ -12,6 +12,7 @@
 
 import { html, render } from "lit";
 import { createElement, Mic, Square } from "lucide";
+import { MIC_AUDIO_CONSTRAINTS } from "./stt.js";
 
 export type VoiceCaptureSeam = {
 	// Fired when recording starts, handed the live mic stream. The voice path attaches
@@ -85,8 +86,14 @@ export class VoiceController {
 		const buttons = [...editor.querySelectorAll("button")].filter((b) => b !== this.host.firstElementChild);
 		const sendBtn = buttons[buttons.length - 1];
 		if (!sendBtn || !sendBtn.parentElement) return;
-		if (sendBtn.previousElementSibling === this.host) return;
-		sendBtn.parentElement.insertBefore(this.host, sendBtn);
+		if (sendBtn.previousElementSibling !== this.host) {
+			sendBtn.parentElement.insertBefore(this.host, sendBtn);
+		}
+		// Narrow the observer from document.body to the send button's own cluster (mirrors
+		// the memory / stop-audio buttons): re-home only when the editor swaps Send↔Stop,
+		// not on every DOM mutation during a streamed reply (which fires per repainted token).
+		this.observer?.disconnect();
+		this.observer?.observe(sendBtn.parentElement, { childList: true });
 	}
 
 	private onKey = (e: KeyboardEvent) => {
@@ -111,7 +118,10 @@ export class VoiceController {
 	private async start(): Promise<void> {
 		this.setState("requesting");
 		try {
-			this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			// This is where the mic stream is actually acquired (PcmRecorder reuses it via
+			// the onStart seam), so the capture constraints must be applied HERE — a bare
+			// {audio:true} would silently ignore PcmRecorder's own constraint object.
+			this.stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS, video: false });
 		} catch {
 			this.setState("denied");
 			window.setTimeout(() => {

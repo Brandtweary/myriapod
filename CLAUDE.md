@@ -164,7 +164,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     click toggles a persistent TTS mute.
   - **consent-modal.ts** — the standalone one-time memory opt-in (own-key/family path + Settings
     re-prompt; the anon path folds it into grant-modal).
-  - **settings.ts** — `MemoryTab` (consent toggle), `OpenRouterKeyTab` (the **Access** tab: own key +
+  - **settings.ts** — `MemoryTab` (consent toggle + a read-only readout of the audit agent's
+    human-review flags), `OpenRouterKeyTab` (the **Access** tab: own key +
     family-code redemption + hosted-balance readout), and `ExportTab` (lexicon download/import — the
     real durability story since IndexedDB can be evicted).
   - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm`. Maps the hidden
@@ -277,6 +278,11 @@ The bundled example app is broken in all published versions; these are load-bear
   `memory_dump` + `web_search`), dropping artifacts. One reassignment covers newSession AND loadSession.
 - **Listener async-safety** — core awaits each listener; a throw or heavy work stalls the run. The
   whole listener body is try/caught and only re-renders on meaningful events.
+- **Link-href scrubbing** — mini-lit's `MarkdownBlock` renders assistant markdown via `unsafeHTML`
+  with no href-scheme check, and it bundles its own `marked` instance we can't hook. Since it renders
+  into light DOM, `forceChatRepaint()` scrubs chat anchors after each commit, stripping the href from
+  any link whose scheme isn't `http(s)`/`mailto` (the model is fed third-party web-search text, so a
+  `javascript:` link is an XSS vector).
 
 ## Conventions & commands
 

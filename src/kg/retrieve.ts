@@ -42,7 +42,16 @@ export interface Vacuum {
 // renders the full vacuum.
 export function retrieveVacuum(graph: Graph, userText: string, agentText = ""): Vacuum {
 	const combined = agentText ? `${userText}\n${agentText}` : userText;
-	return { terms: graph.termMatch(combined) };
+	const terms = graph.termMatch(combined);
+	// Retrieval IS a hit: bump each matched term's hit_count + last_fired so the
+	// hit_count-ranked orderings (the term cap here, memory_dump / memory_search in
+	// kg-tools) reflect real usage instead of sorting all-zeros. The caller persists
+	// the store after retrieval. (Mirrors the Python harness's retrieval-is-a-hit fix.)
+	for (const m of terms) {
+		const node = graph.get(m.label);
+		if (node) graph.fire(node);
+	}
+	return { terms };
 }
 
 export function retrieve(
