@@ -66,6 +66,11 @@ The whole memory travels: the glossary, the running notes, and the small speech 
 picked up all export to a single file, the lexicon, that you can read back another day or on another
 machine.
 
+Note that this adapts to your speech at the word level only — it does **not** fine-tune Whisper to
+your voice, and it can't: acoustic training needs a corpus of your recorded audio, and none is kept
+(every utterance is transcribed and immediately discarded). Fine-tuning on your own voice would mean
+self-hosting and modifying the stack to retain audio first.
+
 ### The pipeline
 
 After every turn, a handful of background agents read the exchange, each with its own task. One
