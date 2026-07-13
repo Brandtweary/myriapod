@@ -27,10 +27,9 @@ provisioning keys) live server-side in `proxy/.env`, which is gitignored; the br
 
 Memory is a **keyword router over evergreen term descriptions** — a glossary of the people, things,
 and ideas in the user's world, each a label + description + aliases. Retrieval is one-hop term
-matching against the conversation; there are **no edges, triples, PPR, or graph traversal**. (An
-earlier design was a knowledge graph; it over-distilled — knowledge is mostly contextual nuance a
-description holds and a triple loses — and recall was always one-hop term-match anyway. The graph was
-cut pre-launch.) User-facing brand: just **memory**. The exportable artifact (term glossary + speech
+matching against the conversation; there are **no edges, triples, PPR, or graph traversal** — a term
+description holds the contextual nuance a bare triple loses, and recall is one-hop anyway, so a graph
+buys nothing. User-facing brand: just **memory**. The exportable artifact (term glossary + speech
 data + running context) is the **lexicon**.
 
 ## The per-turn pipeline (the realized thesis)
@@ -119,8 +118,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 - **One term memory** — mutable, per-browser, persisted to IndexedDB. Starts empty; grows via the
   pipeline. Writes are **opt-in** (a one-time consent gate).
 - **`src/kg/` is the memory implementation** — pure TypeScript, running entirely in-page over
-  IndexedDB; there is no server-side retrieval. (The `kg/` directory name is legacy; the contents are
-  a term store, not a graph.)
+  IndexedDB; there is no server-side retrieval. (The `kg/` directory name is a misnomer — the contents
+  are a term store, not a graph.)
 
 ## Repo Layout
 
@@ -178,7 +177,7 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     the `AgentTool` + renderer). Registered on **every** serving path — web search is universal.
   - **debug.ts** — `[myriapod]`-prefixed instrumentation (dev-only).
   - **theme.css** / **app.css** — a black / white-text / neon-green palette over pi-web-ui's tokens.
-  - **kg/** — the TS memory implementation (directory name is legacy; it's a term store):
+  - **kg/** — the TS memory implementation (directory name is a misnomer; it's a term store):
     - **graph.ts** — `Graph`: load + label/stem/term indexes + `termMatch`, plus the mutable term-store
       API (`getOrCreate` / `addAlias` / `removeAlias` / `rename` / `merge` / `remove` / `setNoStem` /
       `serialize`) and `DescriptionTooLongError`. Aliases are a node field (spoken variants,
@@ -261,8 +260,6 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 - **STT auto-replace.** The lexicon's auto-replace rules rewrite known mistranscriptions in the voice
   transcript before it reaches the display or the model — client-side, voice turns only. The audit
   agent adds those rules conservatively (a real dictionary word is never bare-word auto-replaced).
-- **Clean wipe, no migration.** The pre-launch pivot from graph to term store bumped the IndexedDB
-  version and abandoned the old `personal-graph` store; existing browser data was dummy data.
 
 ## pi-web-ui workarounds (why the frontend looks weird)
 
