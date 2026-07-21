@@ -63,11 +63,10 @@ export class StreamingMessageContainer extends LitElement {
 	override render() {
 		// No message yet but streaming: the model is reasoning before its first token
 		// (Kimi's always-on effort makes this a multi-second gap). Show an explicit
-		// "Thinking…" affordance — a bare blinking caret here reads as a hang.
+		// "Thinking…" line — a bare blinking caret here reads as a hang.
 		if (!this._message) {
 			if (this.isStreaming)
-				return html`<div class="mx-4 mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-					<span class="inline-block w-2 h-2 rounded-full bg-muted-foreground animate-pulse"></span>
+				return html`<div class="mx-4 mb-3 flex items-center text-sm text-muted-foreground">
 					<span class="animate-pulse">Thinking…</span>
 				</div>`;
 			return html``; // Empty until a message is set
