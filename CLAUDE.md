@@ -64,11 +64,14 @@ role-specific instructions **last** (the transcript is an append-only shared pre
 turns — the shape provider prompt-caching rewards). No numeric anchors on expected output counts (an
 anchor becomes the target; qualitative tests + a hard ceiling only). This generalizes past numbers: never pre-load an answer the agent should compute in the moment — ranges, soft biases ("prefer none", "lean toward X"), and "when in doubt" escape hatches all do the same thing. The model has no set point, so your guess doesn't *nudge* its judgment, it *replaces* it — swapping the agent's live read of the actual case for a guess you made blind to it. Write the decision procedure, not the answer; anchor only on a value verified exactly right (a real hard ceiling).
 
-**The async agents think.** Unlike the frontend chat agent (reasoning off for spoken snappiness), all
-three pipeline agents reason at effort (`PIPELINE_THINKING`, currently `"high"`) — latency is free for
-a background job, so they think for judgment quality. GLM 5.2 exposes only `high` and `max` (no
-low/medium); `high` is the lighter tier. This off-vs-high split is the whole point of moving the memory
-workload async.
+**Everything reasons — Kimi K3 is always-on.** Kimi K3 has one reasoning mode and OpenRouter accepts
+only the wire effort `"max"`, so the chat agent AND all three pipeline agents think on every turn;
+there is no "off" tier to spare the spoken path. pi-ai's effort vocabulary has no `"max"`, so
+`myriapod-model.ts` carries `thinkingLevelMap: { high → "max" }` — requesting level `"high"` emits
+`reasoning: { effort: "max" }`. The tooled agents go through this map (`PIPELINE_THINKING = "high"`);
+the summary agent's hand-built `makeCompletion` path sets the raw wire effort `MYRIAPOD_REASONING_EFFORT`
+(`"max"`) directly. The async design still matters for latency (the pipeline runs off the chat's
+critical path), just no longer for a reasoning-tier difference.
 
 ## Architecture
 
@@ -77,13 +80,13 @@ logic on a server). A single **Pi agent** (`@earendil-works/pi-agent-core`) driv
 typed chat; the pipeline agents run on the same library's headless `runAgentLoop`. The browser reaches
 external services:
 
-- **LLM** — a frontier chat model over OpenRouter (GLM 5.2; the model is hardcoded in
+- **LLM** — a frontier chat model over OpenRouter (Kimi K3; the model is hardcoded in
   `myriapod-model.ts`, the one swap point). Reached one of three ways, decided by
   `resolveServingPath()` in `main.ts`:
   - **anon-free** — a $10-per-browser token minted at the proxy's `/anon-init`, spent through the proxy.
   - **family** — a redeemed credit code → a proxy-minted sub-key, spent through the proxy.
   - **own-key** — the visitor's own OpenRouter key, calling OpenRouter **directly** (bypasses the proxy).
-  Reasoning is **off** for snappiness — see the reasoning note in `myriapod-model.ts`.
+  Reasoning is **always on** (Kimi K3 has no off mode) — see the reasoning note in `myriapod-model.ts`.
 - **STT (batch)** — a self-hosted Whisper HTTP endpoint. The whole utterance's PCM is resampled
   24 kHz → 16 kHz, encoded as a 16-bit mono WAV, and POSTed as `multipart/form-data`; the server
   returns `{"text":...}` JSON. Stateless. `src/stt.ts`. Configured via `VITE_STT_BASE`.
@@ -113,8 +116,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 
 - **Frontend** — TypeScript fork of the `@earendil-works/pi-web-ui` example app (Lit 3 + mini-lit +
   Tailwind v4, Vite, static SPA). Retrieval, the term memory, and the pipeline all run in-page.
-- **One hardcoded model** (`src/myriapod-model.ts`) — reasoning off. No model picker. The cost field is
-  approximate (the stats line); the proxy meters the *true* per-call cost.
+- **One hardcoded model** (`src/myriapod-model.ts`) — reasoning always on (Kimi K3). No model picker.
+  The cost field is approximate (the stats line); the proxy meters the *true* per-call cost.
 - **One term memory** — mutable, per-browser, persisted to IndexedDB. Starts empty; grows via the
   pipeline. Writes are **opt-in** (a one-time consent gate).
 - **`src/kg/` is the memory implementation** — pure TypeScript, running entirely in-page over
@@ -151,8 +154,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     auto-replace rules (`applyAutoReplace`, applied client-side to voice transcripts before display),
     and `mistranscriptionCount` (the recurrence signal for the persistent-miss → alias escalation).
   - **myriapod-model.ts** — the single hardcoded chat model + `proxyChatModel()` + the proxy
-    base/provider constants. Carries the load-bearing **reasoning note** (`reasoning:true` +
-    `THINKING_LEVEL:"off"` → pi-ai emits `reasoning:{effort:"none"}` = OFF).
+    base/provider constants. Carries the load-bearing **reasoning note** (Kimi K3 is always-on;
+    `thinkingLevelMap: { high → "max" }` maps pi-ai's level to the only wire effort Kimi accepts).
   - **grant-modal.ts** — the first-interaction welcome / $10-credit modal (anon path); the memory
     opt-in rides inline as a pre-checked toggle. Carries the honeypot + time-trap bot gates.
   - **voice.ts** — the mic button + toggle state machine (`Ctrl+Space`), mic-permission flow, recording
@@ -294,5 +297,5 @@ The bundled example app is broken in all published versions; these are load-bear
 - **Versions are pinned** — the `@earendil-works/*` suite is locked at 0.75.3 (an `overrides` block
   forces it); upgrading emits the identical broken event set.
 - **Single model, metered.** The model and reasoning level are hardcoded; the picker is hidden.
-  Reasoning is off (snappiness). The stats line shows real $ (the proxy meters true cost; pipeline
-  cost is folded into the session total for the readout).
+  Reasoning is always on (Kimi K3 has no off mode). The stats line shows real $ (the proxy meters true
+  cost; pipeline cost is folded into the session total for the readout).

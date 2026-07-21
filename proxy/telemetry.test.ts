@@ -7,7 +7,7 @@ test("telemetry reports one row per session with ip, calls, and credits", () => 
 	db.bindIp("203.0.113.7", "tok-a");
 	db.reconcileUsage({
 		principalId: "tok-a",
-		model: "z-ai/glm-5.2",
+		model: "moonshotai/kimi-k3",
 		promptTokens: 100,
 		completionTokens: 50,
 		cost: 0.004,

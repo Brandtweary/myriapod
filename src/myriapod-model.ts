@@ -1,8 +1,8 @@
 import type { Model } from "@earendil-works/pi-ai";
 
-// One hardcoded chat model: GLM 5.2 (frontier) over OpenRouter. There is no model
-// picker — the audience never sees or chooses it. The same model serves BOTH the
-// chat agent and the three per-turn pipeline agents (audit/memory/summary); one
+// One hardcoded chat model: Kimi K3 (frontier, open-weight) over OpenRouter. There is
+// no model picker — the audience never sees or chooses it. The same model serves BOTH
+// the chat agent and the three per-turn pipeline agents (audit/memory/summary); one
 // model keeps the moving parts down.
 //
 // Three serving paths reach it (resolved in main.ts: resolveServingPath):
@@ -13,41 +13,46 @@ import type { Model } from "@earendil-works/pi-ai";
 // paths use proxyChatModel() (baseUrl = the proxy). The proxy holds the real owner key
 // server-side — no key ever reaches the browser.
 
-// GLM 5.2's OpenRouter model id (z-ai). 1M context.
-export const MYRIAPOD_MODEL_ID = "z-ai/glm-5.2";
+// Kimi K3's OpenRouter model id (moonshotai). 1M context.
+export const MYRIAPOD_MODEL_ID = "moonshotai/kimi-k3";
 
-// The own-key serving path: GLM 5.2 called DIRECTLY against OpenRouter with the
-// visitor's own key. provider "openrouter" makes pi-ai emit the OpenRouter reasoning
-// format (`reasoning: { effort }`) and parse OpenRouter usage.
+// Kimi K3 has exactly ONE reasoning mode: always on, and OpenRouter accepts only the
+// wire effort "max" (more levels "coming soon"). There is no way to turn thinking off, so
+// the chat agent reasons on every turn too — Kimi's inference is fast enough (adaptive
+// thinking + high token throughput) that the always-on latency is acceptable for the
+// voice cascade.
 //
-// reasoning MUST be `true` even though we want thinking OFF: pi-ai only emits a
-// reasoning field when `model.reasoning` is truthy (openai-completions.js buildParams).
-// With reasoning:false it sends NOTHING and GLM falls back to its default — thinking ON
-// (verified: 122 reasoning tokens on a 3-word prompt). With reasoning:true +
-// THINKING_LEVEL "off", pi-ai emits `reasoning: { effort: "none" }`, which GLM honors as
-// OFF (verified via the proxy: effort:"none" → 0 reasoning tokens; effort:"minimal"/"low"
-// actually ADD reasoning). Snappiness is load-bearing for a spoken agent; flip
-// THINKING_LEVEL to a real effort here if answer quality ever needs it.
+// pi-ai's effort vocabulary is off/minimal/low/medium/high/xhigh — there is NO "max". So
+// thinkingLevelMap translates the level we request into the wire value "max": requesting
+// level "high" emits `reasoning: { effort: "max" }`, the only value Kimi honors. reasoning
+// MUST stay `true` — pi-ai only emits a reasoning field when model.reasoning is truthy
+// (buildParams in openai-completions.js).
 //
-// cost is USD per million tokens — APPROXIMATE (GLM 5.2's OpenRouter price; the proxy
-// meters the TRUE per-call cost from OpenRouter's usage, so this only feeds the UI
-// stats line). maxTokens is a generation ceiling, not a target (the proxy also caps it).
+// The single wire effort Kimi accepts. Exported for the hand-built ingest path
+// (kg/ingest.ts makeCompletion), which sets `reasoning.effort` directly rather than going
+// through pi-ai's thinkingLevelMap.
+export const MYRIAPOD_REASONING_EFFORT = "max" as const;
+//
+// cost is USD per million tokens — APPROXIMATE (Kimi K3's OpenRouter price; the proxy
+// meters the TRUE per-call cost from OpenRouter's usage, so this only feeds the UI stats
+// line). maxTokens is a generation ceiling, not a target (the proxy also caps it).
 export const MYRIAPOD_MODEL: Model<"openai-completions"> = {
 	id: MYRIAPOD_MODEL_ID,
-	name: "GLM 5.2",
+	name: "Kimi K3",
 	api: "openai-completions",
 	provider: "openrouter",
 	baseUrl: "https://openrouter.ai/api/v1",
 	reasoning: true,
+	thinkingLevelMap: { high: MYRIAPOD_REASONING_EFFORT },
 	input: ["text"],
-	cost: { input: 1.1, output: 3.4, cacheRead: 0.275, cacheWrite: 1.1 },
+	cost: { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.0 },
 	contextWindow: 1_000_000,
 	maxTokens: 8_192,
 };
 
-// Reasoning off for snappiness (see the long note on MYRIAPOD_MODEL.reasoning). "off"
-// → pi-ai sends `reasoning: { effort: "none" }` → GLM does not think.
-export const MYRIAPOD_THINKING_LEVEL = "off" as const;
+// The chat agent's thinking level. "high" is the sole level thinkingLevelMap translates to
+// Kimi's "max" wire effort — Kimi is always-on, so there is no "off" to choose.
+export const MYRIAPOD_THINKING_LEVEL = "high" as const;
 
 // --- Owner-funded path: the metering proxy ---------------------------------
 // The owner-funded serving paths (anonymous + family) route chat AND ingestion through
@@ -60,11 +65,11 @@ export const MYRIAPOD_PROXY_BASE = ENV.VITE_PROXY_BASE ?? "http://127.0.0.1:8790
 // and the proxy's auth token never share a providerKeys slot.
 export const MYRIAPOD_PROXY_PROVIDER = "myriapod";
 
-// GLM 5.2 pointed at the proxy. pi-ai auto-detects a non-openrouter.ai baseUrl as plain
+// Kimi K3 pointed at the proxy. pi-ai auto-detects a non-openrouter.ai baseUrl as plain
 // OpenAI and would emit `reasoning_effort`; we pin thinkingFormat "openrouter" so the
-// forwarded body carries `reasoning: { effort }` — byte-identical to the proven direct
-// path (the proxy passes it through to OpenRouter verbatim). Everything else (including
-// reasoning:true) is inherited from MYRIAPOD_MODEL.
+// forwarded body carries `reasoning: { effort }` — byte-identical to the direct path (the
+// proxy passes it through to OpenRouter verbatim). Everything else (including reasoning:true
+// and thinkingLevelMap) is inherited from MYRIAPOD_MODEL.
 export function proxyChatModel(): Model<"openai-completions"> {
 	return {
 		...MYRIAPOD_MODEL,

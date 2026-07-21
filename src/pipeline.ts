@@ -24,6 +24,7 @@ import { dbg, dbgError } from "./debug.js";
 import type { Graph } from "./kg/graph.js";
 import type { EmbedFn } from "./kg/embed.js";
 import { makeCompletion } from "./kg/ingest.js";
+import { MYRIAPOD_REASONING_EFFORT } from "./myriapod-model.js";
 import { createPipelineTools, type ReviewFlag } from "./pipeline-tools.js";
 import {
 	buildAuditInstructions,
@@ -68,13 +69,11 @@ interface TickInput {
 	sessionKey: string;
 }
 
-// The async pipeline agents THINK — unlike the frontend chat agent (thinking off
-// for spoken snappiness), these run in the background where latency is free, so
-// they reason for quality (the whole point of moving the memory workload async).
-// GLM 5.2 exposes only two thinking tiers: "high" and "max" (max = xhigh, the
-// default, recommended by Z.ai for hard coding/architecture). There is NO
-// low/medium. "high" is the lighter tier — plenty for tending memory, and it
-// avoids max's token blowout. Bump to "xhigh" only if judgment quality demands it.
+// The pi-ai thinking LEVEL for the tooled pipeline agents (runAgentLoop). Kimi K3 is
+// always-on single-mode, so this maps to the same "max" wire effort the chat agent uses
+// (thinkingLevelMap: { high → "max" } in myriapod-model.ts). Kept as its own constant
+// because the runAgentLoop path takes a pi-ai LEVEL, whereas the summary agent's
+// hand-built ingest path takes the raw wire effort (MYRIAPOD_REASONING_EFFORT) directly.
 const PIPELINE_THINKING = "high" as const;
 
 const BUFFER_MAX_ENTRIES = 30; // per agent, rolling
@@ -402,7 +401,7 @@ export class PipelineRuntime {
 			baseUrl: this.deps.getBaseUrl(),
 			model: this.deps.getModelId(),
 			apiKey: this.deps.getAuth(),
-			reasoningEffort: PIPELINE_THINKING, // async agent → think for quality
+			reasoningEffort: MYRIAPOD_REASONING_EFFORT, // raw wire effort (Kimi: "max"); async → think for quality
 			onUsage: ({ promptTokens, completionTokens }) => {
 				this.deps.addCost(promptTokens, completionTokens);
 				dbg(`pipeline[summary]: ${promptTokens}p/${completionTokens}c tok`);

@@ -67,10 +67,10 @@ export const config = {
 	// Conservative $/1M-token ceiling used to pre-reserve credit before forwarding
 	// (the spend-cap reservation) and as the fallback debit when a completion returns
 	// no usage chunk. An upper bound on real per-token price, not the true cost.
-	costCeilPerMToken: num("COST_CEIL_PER_MTOKEN", 8),
+	costCeilPerMToken: num("COST_CEIL_PER_MTOKEN", 16),
 	// Server-side allowlist of model ids the owner-funded paths may request. Comma-
 	// separated; defaults to the single hardcoded frontend model.
-	allowedModels: (process.env.ALLOWED_MODELS ?? "z-ai/glm-5.2")
+	allowedModels: (process.env.ALLOWED_MODELS ?? "moonshotai/kimi-k3")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),

@@ -537,7 +537,7 @@ The person is speaking to you through speech-to-text, so expect mistranscription
 
 What you are (only worth mentioning if it comes up):
 - If someone asks your name, it's Myriapod.
-- Your mind is GLM 5.2, a frontier language model.
+- Your mind is Kimi K3, a frontier language model.
 - You hear through speech-to-text, and you speak through Kyutai's moshi text-to-speech, in the Václav voice.
 - You're the voice of Myriapod. Your own documentation follows below: it explains what you are and how you work, and it's also the public README, so lean on it for any question about your architecture, your memory, or how someone could run Myriapod themselves. The source and its GitHub link are reachable from the About page.`;
 
@@ -1273,9 +1273,9 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		toolsFactory: () => [],
 	});
 
-	// The model and reasoning level are hardcoded (GLM 5.2, thinking off). Hide both
-	// the model picker and the thinking-level selector — this is a single-model demo,
-	// not a configurable Pi client.
+	// The model and reasoning level are hardcoded (Kimi K3, always-on reasoning). Hide
+	// both the model picker and the thinking-level selector — this is a single-model
+	// demo, not a configurable Pi client.
 	if (chatPanel.agentInterface) {
 		chatPanel.agentInterface.enableModelSelector = false;
 		chatPanel.agentInterface.enableThinkingSelector = false;

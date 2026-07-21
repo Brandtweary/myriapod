@@ -21,14 +21,14 @@ export interface CompletionOpts {
 	// Reports the call's token usage if the caller wants it (unused locally — there
 	// is no per-token cost to fold into the session total).
 	onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void;
-	// OpenRouter reasoning effort ("low" | "medium" | "high"). Omit → thinking OFF
+	// OpenRouter reasoning effort (Kimi K3 accepts only "max"). Omit → thinking OFF
 	// (`reasoning: { enabled: false }`). The async pipeline agents set this: latency
 	// is free for a background job, so they think for quality.
 	reasoningEffort?: string;
 }
 
 /** Build a one-shot, non-streaming completion against an OpenAI-compatible
- *  endpoint. `reasoningEffort` set → GLM thinks at that effort and `message.content`
+ *  endpoint. `reasoningEffort` set → the model thinks at that effort and `message.content`
  *  holds the final answer (reasoning is a separate field, so content stays clean);
  *  omitted → `reasoning: { enabled: false }` (thinking off). OpenRouter honors the
  *  field; endpoints that don't simply ignore it. */

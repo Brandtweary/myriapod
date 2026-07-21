@@ -53,7 +53,7 @@ When you finish a turn, your speech goes to an open
 reads it, along with whatever the memory surfaced for you, and streams a reply that an open
 [Kyutai](https://github.com/kyutai-labs) voice speaks aloud as it arrives, so you hear the first
 words before the last are written. The reference deployment runs
-[GLM 5.2](https://openrouter.ai/z-ai/glm-5.2); swapping it is a one-line change.
+[Kimi K3](https://openrouter.ai/moonshotai/kimi-k3); swapping it is a one-line change.
 
 ### The memory
 
