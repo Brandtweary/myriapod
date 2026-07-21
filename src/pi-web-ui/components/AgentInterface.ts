@@ -9,7 +9,7 @@ import "./MessageList.js";
 import "./Messages.js"; // Import for side effects to register the custom elements
 import { getAppStorage } from "../storage/app-storage.js";
 import "./StreamingMessageContainer.js";
-import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
@@ -46,6 +46,27 @@ export class AgentInterface extends LitElement {
 	private _scrollContainer?: HTMLElement;
 	private _resizeObserver?: ResizeObserver;
 	private _unsubscribeSession?: () => void;
+	// The committed message-list binds an identity-checked array prop, but agent-core
+	// mutates state.messages IN PLACE — so a fresh render passing the same array
+	// reference is skipped by Lit and the list goes stale. We keep our own clone,
+	// re-taken only when a message is added or completed (see the session
+	// subscription), giving Lit a new identity to react to. Per-token message_update
+	// deliberately does NOT refresh this — the streaming container renders the live
+	// message, and re-rendering the whole list per token would defeat that split.
+	private _stableMessages: AgentMessage[] = [];
+
+	private refreshStableMessages() {
+		this._stableMessages = this.session ? [...this.session.state.messages] : [];
+	}
+
+	/** Re-sync the committed message list after an EXTERNAL edit to
+	 *  session.state.messages — one the agent emits no lifecycle event for
+	 *  (e.g. an injected placeholder bubble or a compaction rewrite). Agent-driven
+	 *  changes (streaming, completion) refresh themselves via the subscription. */
+	public refreshMessages() {
+		this.refreshStableMessages();
+		this.requestUpdate();
+	}
 
 	public setInput(text: string, attachments?: Attachment[]) {
 		const update = () => {
@@ -134,6 +155,7 @@ export class AgentInterface extends LitElement {
 			this._unsubscribeSession = undefined;
 		}
 		if (!this.session) return;
+		this.refreshStableMessages();
 
 		// Set default streamFn with proxy support if not already set
 		if (this.session.streamFn === streamSimple) {
@@ -152,6 +174,11 @@ export class AgentInterface extends LitElement {
 		}
 
 		this._unsubscribeSession = this.session.subscribe(async (ev: AgentEvent) => {
+			// Any event but a per-token stream delta means a message was added or
+			// completed — re-clone so the committed list picks it up (see _stableMessages).
+			if (ev.type !== "message_update") {
+				this.refreshStableMessages();
+			}
 			switch (ev.type) {
 				case "message_start":
 				case "turn_start":
@@ -174,6 +201,10 @@ export class AgentInterface extends LitElement {
 						this._streamingContainer.setMessage(null, true);
 					}
 					this.requestUpdate();
+					// finishRun() flips state.isStreaming=false AFTER agent_end with no
+					// further event, so defer one more update to revert the editor's
+					// stop button back to send.
+					setTimeout(() => this.requestUpdate(), 0);
 					break;
 				case "message_update":
 					if (this._streamingContainer) {
@@ -277,7 +308,7 @@ export class AgentInterface extends LitElement {
 			<div class="flex flex-col gap-3">
 				<!-- Stable messages list - won't re-render during streaming -->
 				<message-list
-					.messages=${this.session.state.messages}
+					.messages=${this._stableMessages}
 					.tools=${state.tools}
 					.pendingToolCalls=${this.session ? this.session.state.pendingToolCalls : new Set<string>()}
 					.isStreaming=${state.isStreaming}

@@ -579,11 +579,13 @@ const sanitizeChatAnchors = () => {
 	}
 };
 
-const forceChatRepaint = () => {
-	if (!agent || !chatPanel?.agentInterface) return;
-	agent.state.messages = [...agent.state.messages];
-	chatPanel.agentInterface.requestUpdate();
-	// Scrub dangerous link hrefs after Lit commits the DOM (see sanitizeChatAnchors).
+// AgentInterface reacts to the agent's own lifecycle events, so streaming and
+// message completion repaint the committed list without our help. This is only
+// for EXTERNAL edits to agent.state.messages that emit no event — a voice
+// placeholder bubble, a compaction rewrite: poke the view to re-clone, then scrub
+// model-emitted anchor hrefs once Lit commits the DOM (see sanitizeChatAnchors).
+const repaintChatAfterExternalEdit = () => {
+	chatPanel?.agentInterface?.refreshMessages();
 	requestAnimationFrame(sanitizeChatAnchors);
 };
 
@@ -1107,7 +1109,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 							createCompactionSummaryMessage(summaryRes.value, est.tokens, new Date().toISOString()),
 							...liveKept,
 						];
-						forceChatRepaint();
+						repaintChatAfterExternalEdit();
 						dbg(`compaction: summarized ${toSummarize.length} msgs, kept ${liveKept.length} (~${est.tokens} ctx tok)`);
 					} else if (!summaryRes.ok) {
 							dbgError("compaction summary failed (turn proceeds uncompacted):", summaryRes.error);
@@ -1239,14 +1241,13 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				saveSession();
 			}
 
-			// Repaint the committed message list when a message lands — see
-			// forceChatRepaint (works around <message-list>'s identity-only
-			// reactivity vs agent-core's in-place array mutation).
+			// AgentInterface repaints its own committed list on message completion.
+			// We only scrub model-emitted anchor hrefs after Lit commits the freshly
+			// rendered links (see sanitizeChatAnchors) — the app's XSS concern, not
+			// the component's.
 			if (isTerminal) {
-				forceChatRepaint();
+				requestAnimationFrame(sanitizeChatAnchors);
 			}
-			// finishRun() flips isStreaming=false AFTER agent_end with no event, so
-			// repaint once more on the next tick to restore the send button.
 			if (type === "agent_end") {
 				runInFlight = false; // this run is done — a barge-in send may now proceed
 				// The ending run carried a stamped voice-turn id (or null if it was typed).
@@ -1264,7 +1265,6 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 					voiceQueue = null;
 					voiceTurnCut = false; // reset the barge-in guard for the next turn
 				}
-				setTimeout(forceChatRepaint, 100);
 				// The turn is over → one pipeline tick (consent-gated; fire-and-forget;
 				// a turn ending mid-tick coalesces into exactly one follow-up).
 				if (memoryConsent === "granted") {
@@ -1805,10 +1805,10 @@ async function initApp() {
 				return;
 			}
 			// Recording-in-progress cue: show a user-side placeholder bubble (undulating
-			// ellipsis) right away, removed in onStop when the real transcript lands. A fresh
-			// array + repaint is mandatory — message-list is identity-only reactive.
+			// ellipsis) right away, removed in onStop when the real transcript lands. This
+			// is an external edit (no agent event), so poke the view to re-clone.
 			agent.state.messages = [...agent.state.messages, createVoicePendingMessage()];
-			forceChatRepaint();
+			repaintChatAfterExternalEdit();
 			try {
 				await ensureSynth(); // warm the synth up front so the TTS tap can lazily open a speaker mid-stream
 				await ensureStt();
@@ -1818,7 +1818,7 @@ async function initApp() {
 			if (startCancelled) {
 				// Toggled off during setup — drop the placeholder and start no recorder.
 				agent.state.messages = agent.state.messages.filter((m) => m.role !== "voice-pending");
-				forceChatRepaint();
+				repaintChatAfterExternalEdit();
 				return;
 			}
 			const rec = new PcmRecorder({ stream });
@@ -1852,7 +1852,7 @@ async function initApp() {
 				if (!placeholderShown) return;
 				placeholderShown = false;
 				agent.state.messages = agent.state.messages.filter((m) => m.role !== "voice-pending");
-				forceChatRepaint();
+				repaintChatAfterExternalEdit();
 			};
 			try {
 				const rec = recorder;

@@ -131,7 +131,7 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 - **src/** — the frontend.
   - **main.ts** — app entry + the heart. Agent construction, `resolveServingPath()` + the `/anon-init`
     grant flow + BotD/honeypot gates, the retrieval-injection wrapper around `agent.prompt`, the
-    lifecycle listener (persistence, repaint, **the voice TTS tap**, the `agent_end` pipeline trigger),
+    lifecycle listener (persistence, XSS anchor-scrub, **the voice TTS tap**, the `agent_end` pipeline trigger),
     gutter rendering (term matches + activity feed), voice capture wiring (STT → auto-replace →
     `agent.prompt` → tap → TTS), lexicon load/save + export/import, memory-consent state, and session
     management. Constructs the `PipelineRuntime` and appends its running-context band to the agent's
@@ -279,13 +279,18 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 
 ## pi-web-ui workarounds (why the frontend looks weird)
 
-The vendored UI layer (`src/pi-web-ui/`) is broken as shipped; these patches live in `main.ts` and are
-load-bearing, not cruft:
+The vendored UI layer (`src/pi-web-ui/`) is broken as shipped; these patches live in `main.ts` and the
+vendored components, and are load-bearing, not cruft:
 
-- **Vanishing messages** — pi-agent-core mutates `state.messages` in place, so `<message-list>`
-  (identity-only reactivity) never re-renders. `forceChatRepaint()` reassigns a fresh array on
-  `message_end`/`agent_end`. (The example also listens for a phantom `state-update` event; we bind to
-  the raw lifecycle events instead.)
+- **Vanishing messages** — pi-agent-core mutates `state.messages` in place, so the committed
+  `<message-list>` (identity-only reactivity) skips re-render. Fixed at the source: `AgentInterface`
+  keeps its own `_stableMessages` clone and re-takes it on every lifecycle event but per-token
+  `message_update` (message completion / turn boundaries), giving Lit a fresh identity to react to;
+  the send button reverts via a deferred update after `agent_end` (finishRun flips `isStreaming`
+  with no event). `main.ts` only pokes the view — `repaintChatAfterExternalEdit()` →
+  `agentInterface.refreshMessages()` — for edits the agent emits no event for (voice placeholder
+  bubbles, compaction rewrite). (The shipped example also listens for a phantom `state-update` event;
+  we bind the raw lifecycle events instead.)
 - **Mount-once ChatPanel** — mount it once outside the reactive render root and never re-render it.
 - **Artifacts overwritten with real tools** — `ChatPanel` hardwires an `artifacts` tool regardless of
   `toolsFactory`. We reassign `agent.state.tools` after `setAgent` to our own set (`memory_search` +
@@ -294,9 +299,10 @@ load-bearing, not cruft:
   whole listener body is try/caught and only re-renders on meaningful events.
 - **Link-href scrubbing** — mini-lit's `MarkdownBlock` renders assistant markdown via `unsafeHTML`
   with no href-scheme check, and it bundles its own `marked` instance we can't hook. Since it renders
-  into light DOM, `forceChatRepaint()` scrubs chat anchors after each commit, stripping the href from
-  any link whose scheme isn't `http(s)`/`mailto` (the model is fed third-party web-search text, so a
-  `javascript:` link is an XSS vector).
+  into light DOM, `sanitizeChatAnchors()` scrubs chat anchors after each commit (driven off terminal
+  lifecycle events + `repaintChatAfterExternalEdit`), stripping the href from any link whose scheme
+  isn't `http(s)`/`mailto` (the model is fed third-party web-search text, so a `javascript:` link is
+  an XSS vector).
 
 ## Conventions & commands
 
