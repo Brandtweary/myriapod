@@ -66,10 +66,11 @@ anchor becomes the target; qualitative tests + a hard ceiling only). This genera
 
 **Everything reasons — Kimi K3 is always-on.** Kimi K3 has one reasoning mode and OpenRouter accepts
 only the wire effort `"max"`, so the chat agent AND all three pipeline agents think on every turn;
-there is no "off" tier to spare the spoken path. pi-ai's effort vocabulary has no `"max"`, so
-`myriapod-model.ts` carries `thinkingLevelMap: { high → "max" }` — requesting level `"high"` emits
-`reasoning: { effort: "max" }`. The tooled agents go through this map (`PIPELINE_THINKING = "high"`);
-the summary agent's hand-built `makeCompletion` path sets the raw wire effort `MYRIAPOD_REASONING_EFFORT`
+there is no "off" tier to spare the spoken path. pi-ai 0.80 has `"max"` natively in its `ThinkingLevel`
+vocabulary, so both the chat agent (`MYRIAPOD_THINKING_LEVEL`) and the tooled pipeline agents
+(`PIPELINE_THINKING`) request level `"max"` directly — pi-ai emits `reasoning: { effort: "max" }`, no
+`thinkingLevelMap` needed.
+The summary agent's hand-built `makeCompletion` path sets the raw wire effort `MYRIAPOD_REASONING_EFFORT`
 (`"max"`) directly. The async design still matters for latency (the pipeline runs off the chat's
 critical path), just no longer for a reasoning-tier difference.
 
@@ -114,8 +115,9 @@ passthroughs. It's a cheap always-on spine, deliberately separate from the GPU-h
 (so the site survives the GPU lease lapsing — TTS/STT sit behind swappable seams; dedup degrades to
 string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 
-- **Frontend** — TypeScript fork of the `@earendil-works/pi-web-ui` example app (Lit 3 + mini-lit +
-  Tailwind v4, Vite, static SPA). Retrieval, the term memory, and the pipeline all run in-page.
+- **Frontend** — a TypeScript app over the `pi-web-ui` UI layer, whose source is **vendored** in
+  `src/pi-web-ui/` (Lit 3 + mini-lit + Tailwind v4, Vite, static SPA). Retrieval, the term memory, and
+  the pipeline all run in-page.
 - **One hardcoded model** (`src/myriapod-model.ts`) — reasoning always on (Kimi K3). No model picker.
   The cost field is approximate (the stats line); the proxy meters the *true* per-call cost.
 - **One term memory** — mutable, per-browser, persisted to IndexedDB. Starts empty; grows via the
@@ -155,7 +157,7 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     and `mistranscriptionCount` (the recurrence signal for the persistent-miss → alias escalation).
   - **myriapod-model.ts** — the single hardcoded chat model + `proxyChatModel()` + the proxy
     base/provider constants. Carries the load-bearing **reasoning note** (Kimi K3 is always-on;
-    `thinkingLevelMap: { high → "max" }` maps pi-ai's level to the only wire effort Kimi accepts).
+    thinking level `"max"` — pi-ai 0.80's native value — is the only wire effort Kimi accepts).
   - **grant-modal.ts** — the first-interaction welcome / $10-credit modal (anon path); the memory
     opt-in rides inline as a pre-checked toggle. Carries the honeypot + time-trap bot gates.
   - **voice.ts** — the mic button + toggle state machine (`Ctrl+Space`), mic-permission flow, recording
@@ -180,6 +182,17 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     the `AgentTool` + renderer). Registered on **every** serving path — web search is universal.
   - **debug.ts** — `[myriapod]`-prefixed instrumentation (dev-only).
   - **theme.css** / **app.css** — a black / white-text / neon-green palette over pi-web-ui's tokens.
+  - **pi-web-ui/** — the vendored `@earendil-works/pi-web-ui` UI layer (the abandoned upstream, copied
+    from its shipped TS source: `ChatPanel`, `components/`, `dialogs/`, `storage/`, `tools/`, `utils/`,
+    `prompts/`, the barrel `index.ts`, and the prebuilt Tailwind `app.css`). The app imports it by
+    relative path; its own internal deps (pi-agent-core, pi-ai, mini-lit, lit, and the artifact-stack
+    libs docx-preview / xlsx / pdfjs-dist / jszip / @lmstudio/sdk / ollama / highlight.js) are direct
+    npm deps. pi-ai's runtime functions (`streamSimple` / `complete` / `getModel` / `getModels` /
+    `getProviders`) are imported from the `@earendil-works/pi-ai/compat` subpath — the main entry
+    exports only types + the new provider-store surface. The tree is MIT (Mario Zechner / Earendil);
+    its `LICENSE` sits alongside the vendored source. The workarounds section below patches its
+    behavior from `main.ts` rather than editing it — though since it's vendored (editable), a break the
+    upstream would have caused is fixed in place.
   - **kg/** — the TS memory implementation (directory name is a misnomer; it's a term store):
     - **graph.ts** — `Graph`: load + label/stem/term indexes + `termMatch`, plus the mutable term-store
       API (`getOrCreate` / `addAlias` / `removeAlias` / `rename` / `merge` / `remove` / `setNoStem` /
@@ -266,7 +279,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 
 ## pi-web-ui workarounds (why the frontend looks weird)
 
-The bundled example app is broken in all published versions; these are load-bearing, not cruft:
+The vendored UI layer (`src/pi-web-ui/`) is broken as shipped; these patches live in `main.ts` and are
+load-bearing, not cruft:
 
 - **Vanishing messages** — pi-agent-core mutates `state.messages` in place, so `<message-list>`
   (identity-only reactivity) never re-renders. `forceChatRepaint()` reassigns a fresh array on
@@ -294,8 +308,13 @@ The bundled example app is broken in all published versions; these are load-bear
   self-hosters pointing at their own moshi/Whisper): `VITE_TTS_VOICE` / `VITE_TTS_AUTH` /
   `VITE_TTS_CFG_ALPHA` / `VITE_STT_AUTH`, all with sane fallbacks. On the proxy, `SEARXNG_BASE` and
   `EMBED_BASE` point at the self-hosted backends. The own-key path always goes to OpenRouter direct.
-- **Versions are pinned** — the `@earendil-works/*` suite is locked at 0.75.3 (an `overrides` block
-  forces it); upgrading emits the identical broken event set.
+- **Versions are pinned** — the runtime `@earendil-works/*` suite (pi-agent-core, pi-ai, pi-tui) is
+  locked at 0.80.10 (an `overrides` block forces it), the release line with native Kimi K3 support
+  (empty-signature thinking-block replay for multi-turn/tool loops, the `"max"` thinking level,
+  correct output-limit/pricing metadata). The raw lifecycle event model (`message_*`, `agent_end`,
+  `tool_execution_*`) and in-place `state.messages` mutation are unchanged from earlier lines, so the
+  `main.ts` workarounds below still stand. The UI layer (`pi-web-ui`) is no longer an npm dep — its
+  source is vendored in `src/pi-web-ui/`.
 - **Single model, metered.** The model and reasoning level are hardcoded; the picker is hidden.
   Reasoning is always on (Kimi K3 has no off mode). The stats line shows real $ (the proxy meters true
   cost; pipeline cost is folded into the session total for the readout).

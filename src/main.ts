@@ -5,7 +5,7 @@ import {
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
 	estimateTokens,
-	generateSummary,
+	serializeConversation,
 	shouldCompact,
 } from "@earendil-works/pi-agent-core";
 import type { Model, TextContent } from "@earendil-works/pi-ai";
@@ -22,7 +22,7 @@ import {
 	SettingsDialog,
 	SettingsStore,
 	setAppStorage,
-} from "@earendil-works/pi-web-ui";
+} from "./pi-web-ui/index.js";
 import { html, render } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
@@ -36,6 +36,7 @@ import {
 	MYRIAPOD_MODEL_ID,
 	MYRIAPOD_PROXY_BASE,
 	MYRIAPOD_PROXY_PROVIDER,
+	MYRIAPOD_REASONING_EFFORT,
 	MYRIAPOD_THINKING_LEVEL,
 	proxyChatModel,
 } from "./myriapod-model.js";
@@ -56,6 +57,7 @@ import { createWebSearchTool, registerWebToolRenderer } from "./web-tools.js";
 import { Graph } from "./kg/graph.js";
 import { InjectedLedger } from "./kg/ledger.js";
 import { retrieve } from "./kg/retrieve.js";
+import { makeCompletion } from "./kg/ingest.js";
 import { makeEmbedClient } from "./kg/embed.js";
 import type { GraphAsset, TermMatch } from "./kg/types.js";
 import { PIPELINE_STORE, PipelineRuntime, type RunningContextEntry } from "./pipeline.js";
@@ -967,6 +969,19 @@ window.addEventListener("resize", () => {
 // On timeout we fall through to the uncompacted path, same as the error branch.
 const COMPACTION_SUMMARY_TIMEOUT_MS = 60_000;
 
+// System instruction for the history-bounding summary. The summary is driven through
+// the app's own OpenAI-compatible completion seam (kg/ingest makeCompletion) rather than
+// pi-agent-core's generateSummary: makeCompletion already rides the active serving path +
+// bearer, whereas generateSummary wants a full Models provider-registry object the proxy
+// path would have to reconstruct. This prompt keeps the summary a faithful, self-contained
+// recap of the earlier conversation (not a coding-assistant-flavored template).
+const COMPACTION_SUMMARY_INSTRUCTIONS =
+	"You are a conversation-summarization assistant. Read the earlier part of a conversation " +
+	"between a user and a voice assistant, then write a single faithful summary that preserves " +
+	"the facts, decisions, questions, and any personal details the assistant would need to keep " +
+	"the conversation coherent going forward. Do NOT continue the conversation or answer any " +
+	"question in it — output only the summary prose.";
+
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -1060,20 +1075,29 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 				if (cut > 0 && cut < msgs.length) {
 					const toSummarize = msgs.slice(0, cut);
 					const COMPACTION_TIMEOUT = Symbol("compaction-timeout");
-					const summaryRes = await Promise.race([
-						generateSummary(
-							toSummarize,
-							agent.state.model!,
-							DEFAULT_COMPACTION_SETTINGS.reserveTokens,
-							servingPath.auth,
-						),
+					const summaryCompletion = makeCompletion({
+							baseUrl: servingPath.baseUrl,
+							model: agent.state.model?.id ?? MYRIAPOD_MODEL_ID,
+							apiKey: servingPath.auth,
+							reasoningEffort: MYRIAPOD_REASONING_EFFORT,
+						});
+						// serializeConversation renders the LLM-shaped history to text; customConvertToLlm
+						// maps our custom roles (memory-context / an earlier compaction summary) first.
+						const conversationText = serializeConversation(customConvertToLlm(toSummarize));
+						const summaryRes = await Promise.race([
+						summaryCompletion([
+								{ role: "system", content: COMPACTION_SUMMARY_INSTRUCTIONS },
+								{ role: "user", content: conversationText },
+							])
+								.then((value) => ({ ok: true as const, value }))
+								.catch((error) => ({ ok: false as const, error })),
 						new Promise<typeof COMPACTION_TIMEOUT>((resolve) =>
 							setTimeout(() => resolve(COMPACTION_TIMEOUT), COMPACTION_SUMMARY_TIMEOUT_MS),
 						),
 					]);
 					if (summaryRes === COMPACTION_TIMEOUT) {
-						dbgError("compaction generateSummary timed out (turn proceeds uncompacted)");
-					} else if (summaryRes.ok) {
+						dbgError("compaction summary timed out (turn proceeds uncompacted)");
+					} else if (summaryRes.ok && summaryRes.value.trim()) {
 						// Re-derive the kept tail from the LIVE array: a concurrent append (e.g. a
 						// voice-pending placeholder) may have landed during the summary await, and the
 						// stale pre-await snapshot would silently drop it. Only appends happen during the
@@ -1085,8 +1109,8 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 						];
 						forceChatRepaint();
 						dbg(`compaction: summarized ${toSummarize.length} msgs, kept ${liveKept.length} (~${est.tokens} ctx tok)`);
-					} else {
-						dbgError("compaction generateSummary failed (turn proceeds uncompacted):", summaryRes.error);
+					} else if (!summaryRes.ok) {
+							dbgError("compaction summary failed (turn proceeds uncompacted):", summaryRes.error);
 					}
 				}
 			}
@@ -1129,7 +1153,7 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 	};
 
 	agentUnsubscribe = agent.subscribe((event: any) => {
-		// pi-agent-core 0.75.3 emits raw lifecycle events (message_start,
+		// pi-agent-core emits raw lifecycle events (message_start,
 		// message_update, message_end, turn_end, agent_end, tool_execution_*) —
 		// NOT a synthetic "state-update" with an attached `event.state`. The
 		// shipped example listened for "state-update", so its bookkeeping never

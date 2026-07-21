@@ -1,8 +1,8 @@
 import type { CompactionSummaryMessage } from "@earendil-works/pi-agent-core";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentMessage, MessageRenderer } from "@earendil-works/pi-web-ui";
-import { defaultConvertToLlm, registerMessageRenderer } from "@earendil-works/pi-web-ui";
+import type { AgentMessage, MessageRenderer } from "./pi-web-ui/index.js";
+import { defaultConvertToLlm, registerMessageRenderer } from "./pi-web-ui/index.js";
 import { Alert } from "@mariozechner/mini-lit/dist/Alert.js";
 import { html } from "lit";
 

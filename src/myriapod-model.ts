@@ -22,15 +22,14 @@ export const MYRIAPOD_MODEL_ID = "moonshotai/kimi-k3";
 // thinking + high token throughput) that the always-on latency is acceptable for the
 // voice cascade.
 //
-// pi-ai's effort vocabulary is off/minimal/low/medium/high/xhigh — there is NO "max". So
-// thinkingLevelMap translates the level we request into the wire value "max": requesting
-// level "high" emits `reasoning: { effort: "max" }`, the only value Kimi honors. reasoning
-// MUST stay `true` — pi-ai only emits a reasoning field when model.reasoning is truthy
-// (buildParams in openai-completions.js).
+// pi-ai 0.80 includes "max" natively in its ThinkingLevel vocabulary, so the chat agent
+// requests thinking level "max" directly (MYRIAPOD_THINKING_LEVEL) and pi-ai emits
+// `reasoning: { effort: "max" }`, the only value Kimi honors — no thinkingLevelMap needed.
+// reasoning MUST stay `true` — pi-ai only emits a reasoning field when model.reasoning is
+// truthy (buildParams in openai-completions).
 //
 // The single wire effort Kimi accepts. Exported for the hand-built ingest path
-// (kg/ingest.ts makeCompletion), which sets `reasoning.effort` directly rather than going
-// through pi-ai's thinkingLevelMap.
+// (kg/ingest.ts makeCompletion), which sets `reasoning.effort` directly.
 export const MYRIAPOD_REASONING_EFFORT = "max" as const;
 //
 // cost is USD per million tokens — APPROXIMATE (Kimi K3's OpenRouter price; the proxy
@@ -43,16 +42,14 @@ export const MYRIAPOD_MODEL: Model<"openai-completions"> = {
 	provider: "openrouter",
 	baseUrl: "https://openrouter.ai/api/v1",
 	reasoning: true,
-	thinkingLevelMap: { high: MYRIAPOD_REASONING_EFFORT },
 	input: ["text"],
 	cost: { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.0 },
 	contextWindow: 1_000_000,
 	maxTokens: 8_192,
 };
 
-// The chat agent's thinking level. "high" is the sole level thinkingLevelMap translates to
-// Kimi's "max" wire effort — Kimi is always-on, so there is no "off" to choose.
-export const MYRIAPOD_THINKING_LEVEL = "high" as const;
+// The chat agent's thinking level — Kimi's native "max" (always-on; there is no "off").
+export const MYRIAPOD_THINKING_LEVEL = "max" as const;
 
 // --- Owner-funded path: the metering proxy ---------------------------------
 // The owner-funded serving paths (anonymous + family) route chat AND ingestion through
@@ -68,8 +65,8 @@ export const MYRIAPOD_PROXY_PROVIDER = "myriapod";
 // Kimi K3 pointed at the proxy. pi-ai auto-detects a non-openrouter.ai baseUrl as plain
 // OpenAI and would emit `reasoning_effort`; we pin thinkingFormat "openrouter" so the
 // forwarded body carries `reasoning: { effort }` — byte-identical to the direct path (the
-// proxy passes it through to OpenRouter verbatim). Everything else (including reasoning:true
-// and thinkingLevelMap) is inherited from MYRIAPOD_MODEL.
+// proxy passes it through to OpenRouter verbatim). Everything else (including reasoning:true)
+// is inherited from MYRIAPOD_MODEL.
 export function proxyChatModel(): Model<"openai-completions"> {
 	return {
 		...MYRIAPOD_MODEL,

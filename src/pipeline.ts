@@ -19,7 +19,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import { defaultConvertToLlm } from "@earendil-works/pi-web-ui";
+import { defaultConvertToLlm } from "./pi-web-ui/index.js";
 import { dbg, dbgError } from "./debug.js";
 import type { Graph } from "./kg/graph.js";
 import type { EmbedFn } from "./kg/embed.js";
@@ -70,11 +70,11 @@ interface TickInput {
 }
 
 // The pi-ai thinking LEVEL for the tooled pipeline agents (runAgentLoop). Kimi K3 is
-// always-on single-mode, so this maps to the same "max" wire effort the chat agent uses
-// (thinkingLevelMap: { high → "max" } in myriapod-model.ts). Kept as its own constant
+// always-on single-mode and pi-ai 0.80 has "max" natively, so the agents request level
+// "max" directly — the same wire effort the chat agent uses. Kept as its own constant
 // because the runAgentLoop path takes a pi-ai LEVEL, whereas the summary agent's
 // hand-built ingest path takes the raw wire effort (MYRIAPOD_REASONING_EFFORT) directly.
-const PIPELINE_THINKING = "high" as const;
+const PIPELINE_THINKING = "max" as const;
 
 const BUFFER_MAX_ENTRIES = 30; // per agent, rolling
 const FLAGS_MAX_ENTRIES = 100; // review-flags store, rolling (was unbounded → grew forever)

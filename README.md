@@ -101,10 +101,9 @@ is in [`docs/self-hosting.md`](./docs/self-hosting.md).
 
 ## Stack
 
-TypeScript on [`@earendil-works/pi-web-ui`](https://www.npmjs.com/package/@earendil-works/pi-web-ui)
-(Lit 3, Tailwind v4, Vite), a static single-page app; the conversation rides the
-`@earendil-works/pi-agent-core` agent. Architecture and internals are documented in
-[`CLAUDE.md`](./CLAUDE.md).
+TypeScript on a vendored `pi-web-ui` UI layer (Lit 3, Tailwind v4, Vite), a static single-page app;
+the conversation rides the `@earendil-works/pi-agent-core` agent. Architecture and internals are
+documented in [`CLAUDE.md`](./CLAUDE.md).
 
 ## Development
 

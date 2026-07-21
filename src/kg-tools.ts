@@ -7,8 +7,8 @@
 // Dispatch is automatic once these sit in agent.state.tools.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { ToolRenderer } from "@earendil-works/pi-web-ui";
-import { registerToolRenderer, renderHeader } from "@earendil-works/pi-web-ui";
+import type { ToolRenderer } from "./pi-web-ui/index.js";
+import { registerToolRenderer, renderHeader } from "./pi-web-ui/index.js";
 import { Database, Search } from "lucide";
 import { type Static, Type } from "typebox";
 import type { Graph } from "./kg/graph.js";

@@ -1,5 +1,5 @@
-/* Base styles: the prebuilt Tailwind v4 stylesheet shipped by pi-web-ui
+/* Base styles: the prebuilt Tailwind v4 stylesheet vendored from pi-web-ui
    (theme tokens, component classes, utilities). Myriapod theme overrides
    are layered on top in theme.css. */
-@import "@earendil-works/pi-web-ui/app.css";
+@import "./pi-web-ui/app.css";
 @import "./theme.css";

@@ -1,4 +1,4 @@
-import { SettingsTab } from "@earendil-works/pi-web-ui";
+import { SettingsTab } from "./pi-web-ui/index.js";
 import { html, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
