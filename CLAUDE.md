@@ -186,11 +186,12 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     from its shipped TS source: `ChatPanel`, `components/`, `dialogs/`, `storage/`, `tools/`, `utils/`,
     `prompts/`, the barrel `index.ts`, and the prebuilt Tailwind `app.css`). The app imports it by
     relative path; its own internal deps (pi-agent-core, pi-ai, mini-lit, lit) are direct npm deps. The
-    artifacts side-panel, file-attachment upload/extraction, and local-model auto-discovery are cut from
-    the vendored tree (Myriapod drops the artifacts tool, hides the model picker, and needs no
-    attachments), so the heavy libraries those pulled — docx-preview / xlsx / pdfjs-dist / jszip /
-    @lmstudio/sdk / ollama — are gone; `highlight.js` remains only transitively via mini-lit's
-    `MarkdownBlock`. pi-ai's runtime functions (`streamSimple` / `complete` / `getModel` / `getModels` /
+    artifacts side-panel and local-model auto-discovery are cut from the vendored tree (Myriapod drops
+    the artifacts tool and hides the model picker), so the libraries those alone pulled — `highlight.js`
+    (kept only transitively via mini-lit's `MarkdownBlock`), `@lmstudio/sdk`, and `ollama` — are out of
+    the bundle. File-attachment upload IS kept (the user can attach a document and send it to the model),
+    so its parsers — docx-preview / xlsx / pdfjs-dist / jszip, loaded via `utils/attachment-utils.ts` —
+    remain direct deps. pi-ai's runtime functions (`streamSimple` / `complete` / `getModel` / `getModels` /
     `getProviders`) come from `src/pi-ai-slim-compat.ts` — a lean stand-in for pi-ai's side-effectful
     `/compat` barrel (which eagerly registers every provider and pulls the whole `providers/all` catalog
     into the main chunk). The shim sources them from the direct, side-effect-free entrypoints (the lazy

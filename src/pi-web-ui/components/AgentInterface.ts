@@ -21,6 +21,7 @@ import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
 export class AgentInterface extends LitElement {
 	// Optional external session: when provided, this component becomes a view over the session
 	@property({ attribute: false }) session?: Agent;
+	@property({ type: Boolean }) enableAttachments = true;
 	@property({ type: Boolean }) enableModelSelector = true;
 	@property({ type: Boolean }) enableThinkingSelector = true;
 	@property({ type: Boolean }) showThemeToggle = false;
@@ -396,6 +397,7 @@ export class AgentInterface extends LitElement {
 							.isStreaming=${state.isStreaming}
 							.currentModel=${state.model}
 							.thinkingLevel=${state.thinkingLevel}
+							.showAttachmentButton=${this.enableAttachments}
 							.showModelSelector=${this.enableModelSelector}
 							.showThinkingSelector=${this.enableThinkingSelector}
 							.onSend=${(input: string, attachments: Attachment[]) => {
