@@ -9,7 +9,7 @@ import type {
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { renderTool } from "../tools/index.js";
-import type { Attachment } from "../utils/attachment-utils.js";
+import type { Attachment } from "../utils/attachment-types.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import "./ThinkingBlock.js";

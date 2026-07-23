@@ -1,5 +1,5 @@
 import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
-import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
+import { getModels, getProviders } from "../../pi-ai-slim-compat.js";
 import { icon } from "@mariozechner/mini-lit";
 import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
@@ -14,7 +14,10 @@ import { getAppStorage } from "../storage/app-storage.js";
 import type { AutoDiscoveryProviderType } from "../storage/stores/custom-providers-store.js";
 import { formatModelCost } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
-import { discoverModels } from "../utils/model-discovery.js";
+// Auto-discovery of local model servers is not supported; return no models.
+async function discoverModels(_type: unknown, _baseUrl: string, _apiKey?: string): Promise<Model<any>[]> {
+	return [];
+}
 
 /**
  * Score a query against a text using subsequence matching.

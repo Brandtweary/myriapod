@@ -1,4 +1,4 @@
-import { getProviders } from "@earendil-works/pi-ai/compat";
+import { getProviders } from "../../pi-ai-slim-compat.js";
 import { i18n } from "@mariozechner/mini-lit";
 import { Select } from "@mariozechner/mini-lit/dist/Select.js";
 import { html, type TemplateResult } from "lit";
@@ -11,7 +11,10 @@ import type {
 	CustomProvider,
 	CustomProviderType,
 } from "../storage/stores/custom-providers-store.js";
-import { discoverModels } from "../utils/model-discovery.js";
+// Auto-discovery of local model servers is not supported; return no models.
+async function discoverModels(_type: unknown, _baseUrl: string, _apiKey?: string): Promise<{ length: number }[]> {
+	return [];
+}
 import { CustomProviderDialog } from "./CustomProviderDialog.js";
 import { SettingsTab } from "./SettingsDialog.js";
 

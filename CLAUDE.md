@@ -185,11 +185,19 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
   - **pi-web-ui/** — the vendored `@earendil-works/pi-web-ui` UI layer (the abandoned upstream, copied
     from its shipped TS source: `ChatPanel`, `components/`, `dialogs/`, `storage/`, `tools/`, `utils/`,
     `prompts/`, the barrel `index.ts`, and the prebuilt Tailwind `app.css`). The app imports it by
-    relative path; its own internal deps (pi-agent-core, pi-ai, mini-lit, lit, and the artifact-stack
-    libs docx-preview / xlsx / pdfjs-dist / jszip / @lmstudio/sdk / ollama / highlight.js) are direct
-    npm deps. pi-ai's runtime functions (`streamSimple` / `complete` / `getModel` / `getModels` /
-    `getProviders`) are imported from the `@earendil-works/pi-ai/compat` subpath — the main entry
-    exports only types + the new provider-store surface. The tree is MIT (Mario Zechner / Earendil);
+    relative path; its own internal deps (pi-agent-core, pi-ai, mini-lit, lit) are direct npm deps. The
+    artifacts side-panel, file-attachment upload/extraction, and local-model auto-discovery are cut from
+    the vendored tree (Myriapod drops the artifacts tool, hides the model picker, and needs no
+    attachments), so the heavy libraries those pulled — docx-preview / xlsx / pdfjs-dist / jszip /
+    @lmstudio/sdk / ollama — are gone; `highlight.js` remains only transitively via mini-lit's
+    `MarkdownBlock`. pi-ai's runtime functions (`streamSimple` / `complete` / `getModel` / `getModels` /
+    `getProviders`) come from `src/pi-ai-slim-compat.ts` — a lean stand-in for pi-ai's side-effectful
+    `/compat` barrel (which eagerly registers every provider and pulls the whole `providers/all` catalog
+    into the main chunk). The shim sources them from the direct, side-effect-free entrypoints (the lazy
+    `openai-completions` api — the only api Myriapod drives — plus `providers/all`'s static getters and
+    the main entry's types). A Vite alias redirects `@earendil-works/pi-ai/compat` to the shim so
+    pi-agent-core, which imports the barrel from its own agent loop, resolves to the lean surface too;
+    the provider SDK fan-out then drops out of the bundle. The tree is MIT (Mario Zechner / Earendil);
     its `LICENSE` sits alongside the vendored source. The workarounds section below patches its
     behavior from `main.ts` rather than editing it — though since it's vendored (editable), a break the
     upstream would have caused is fixed in place.

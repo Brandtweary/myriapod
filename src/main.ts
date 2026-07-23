@@ -1291,9 +1291,8 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			if (provider === MYRIAPOD_PROXY_PROVIDER) return true;
 			return await ApiKeyPromptDialog.prompt(provider);
 		},
-		// Empty factory: ChatPanel still prepends its own `artifacts` tool, so we
-		// overwrite agent.state.tools outright below with our real tool set (KG search
-		// + dump, and web search on the owner-funded paths) — that also drops artifacts.
+		// Empty factory: we overwrite agent.state.tools outright below with our real
+		// tool set (KG search + dump, and web search on the owner-funded paths).
 		toolsFactory: () => [],
 	});
 
@@ -1305,10 +1304,8 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		chatPanel.agentInterface.enableThinkingSelector = false;
 	}
 
-	// Install our native tools, OVERWRITING ChatPanel's auto-prepended `artifacts` tool
-	// (`[artifactsPanel.tool, ...toolsFactory()]`) — this also keeps the artifacts side
-	// panel out. One assignment covers newSession AND loadSession (the per-turn context
-	// snapshot + the prompt wrapper don't touch state.tools). The memory tools read the
+	// Install our native tools. One assignment covers newSession AND loadSession (the
+	// per-turn context snapshot + the prompt wrapper don't touch state.tools). The memory tools read the
 	// live term store via a getter (it's reassigned on import/delete). web_search is
 	// universal — table-stakes for every visitor — so it's registered on every path. The
 	// endpoint is open (per-IP rate-limited, not principal-gated): owner-funded paths send

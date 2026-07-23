@@ -81,6 +81,14 @@ export default defineConfig({
 	plugins: [tailwindcss(), debugLogPlugin(), cspPlugin()],
 	resolve: {
 		alias: {
+			// pi-ai's `/compat` barrel is side-effectful: importing it registers every
+			// builtin provider API and statically pulls `providers/all` (all provider
+			// catalogs + the image-generation surface) into the main chunk. Myriapod
+			// only drives `openai-completions`, and pi-agent-core imports the barrel
+			// from its own agent loop, so aliasing it to a lean, side-effect-free
+			// replacement drops the whole provider fan-out from the graph for the app
+			// AND the npm-dep agent core in one move. See src/pi-ai-slim-compat.ts.
+			"@earendil-works/pi-ai/compat": fileURLToPath(new URL("./src/pi-ai-slim-compat.ts", import.meta.url)),
 			// pi-ai bundles a multi-provider SDK; myriapod only drives OpenRouter, so
 			// the Mistral provider (dynamically imported, never invoked) is dead weight
 			// that also pulls OpenTelemetry into the build. Alias it to an inert stub so

@@ -9,7 +9,10 @@ import { html, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { getAppStorage } from "../storage/app-storage.js";
 import type { CustomProvider, CustomProviderType } from "../storage/stores/custom-providers-store.js";
-import { discoverModels } from "../utils/model-discovery.js";
+// Auto-discovery of local model servers is not supported; return no models.
+async function discoverModels(_type: unknown, _baseUrl: string, _apiKey?: string): Promise<Model<any>[]> {
+	return [];
+}
 
 export class CustomProviderDialog extends DialogBase {
 	private provider?: CustomProvider;

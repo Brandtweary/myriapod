@@ -1,5 +1,5 @@
 import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { streamSimple } from "../../pi-ai-slim-compat.js";
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
@@ -10,7 +10,7 @@ import "./Messages.js"; // Import for side effects to register the custom elemen
 import { getAppStorage } from "../storage/app-storage.js";
 import "./StreamingMessageContainer.js";
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Attachment } from "../utils/attachment-utils.js";
+import type { Attachment } from "../utils/attachment-types.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { createStreamFn } from "../utils/proxy-utils.js";
@@ -21,7 +21,6 @@ import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
 export class AgentInterface extends LitElement {
 	// Optional external session: when provided, this component becomes a view over the session
 	@property({ attribute: false }) session?: Agent;
-	@property({ type: Boolean }) enableAttachments = true;
 	@property({ type: Boolean }) enableModelSelector = true;
 	@property({ type: Boolean }) enableThinkingSelector = true;
 	@property({ type: Boolean }) showThemeToggle = false;
@@ -397,7 +396,6 @@ export class AgentInterface extends LitElement {
 							.isStreaming=${state.isStreaming}
 							.currentModel=${state.model}
 							.thinkingLevel=${state.thinkingLevel}
-							.showAttachmentButton=${this.enableAttachments}
 							.showModelSelector=${this.enableModelSelector}
 							.showThinkingSelector=${this.enableThinkingSelector}
 							.onSend=${(input: string, attachments: Attachment[]) => {

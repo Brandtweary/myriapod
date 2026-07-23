@@ -5,7 +5,6 @@ export type { Model } from "@earendil-works/pi-ai";
 export { ChatPanel } from "./ChatPanel.js";
 // Components
 export { AgentInterface } from "./components/AgentInterface.js";
-export { AttachmentTile } from "./components/AttachmentTile.js";
 export { ConsoleBlock } from "./components/ConsoleBlock.js";
 export { CustomProviderCard } from "./components/CustomProviderCard.js";
 export { ExpandableSection } from "./components/ExpandableSection.js";
@@ -42,8 +41,6 @@ export {
 } from "./components/SandboxedIframe.js";
 export { StreamingMessageContainer } from "./components/StreamingMessageContainer.js";
 // Sandbox Runtime Providers
-export { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
-export { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
 export { type ConsoleLog, ConsoleRuntimeProvider } from "./components/sandbox/ConsoleRuntimeProvider.js";
 export {
 	type DownloadableFile,
@@ -54,7 +51,6 @@ export { RUNTIME_MESSAGE_ROUTER } from "./components/sandbox/RuntimeMessageRoute
 export type { SandboxRuntimeProvider } from "./components/sandbox/SandboxRuntimeProvider.js";
 export { ThinkingBlock } from "./components/ThinkingBlock.js";
 export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
-export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.js";
 export { CustomProviderDialog } from "./dialogs/CustomProviderDialog.js";
 // Dialogs
 export { ModelSelector } from "./dialogs/ModelSelector.js";
@@ -90,17 +86,6 @@ export type {
 	StorageTransaction,
 	StoreConfig,
 } from "./storage/types.js";
-// Artifacts
-export { ArtifactElement } from "./tools/artifacts/ArtifactElement.js";
-export { ArtifactPill } from "./tools/artifacts/ArtifactPill.js";
-export { type Artifact, ArtifactsPanel, type ArtifactsParams } from "./tools/artifacts/artifacts.js";
-export { ArtifactsToolRenderer } from "./tools/artifacts/artifacts-tool-renderer.js";
-export { HtmlArtifact } from "./tools/artifacts/HtmlArtifact.js";
-export { ImageArtifact } from "./tools/artifacts/ImageArtifact.js";
-export { MarkdownArtifact } from "./tools/artifacts/MarkdownArtifact.js";
-export { SvgArtifact } from "./tools/artifacts/SvgArtifact.js";
-export { TextArtifact } from "./tools/artifacts/TextArtifact.js";
-export { createExtractDocumentTool, extractDocumentTool } from "./tools/extract-document.js";
 // Tools
 export { getToolRenderer, registerToolRenderer, renderTool, setShowJsonMode } from "./tools/index.js";
 export { createJavaScriptReplTool, javascriptReplTool } from "./tools/javascript-repl.js";
@@ -111,9 +96,8 @@ export { CalculateRenderer } from "./tools/renderers/CalculateRenderer.js";
 export { DefaultRenderer } from "./tools/renderers/DefaultRenderer.js";
 export { GetCurrentTimeRenderer } from "./tools/renderers/GetCurrentTimeRenderer.js";
 export type { ToolRenderer, ToolRenderResult } from "./tools/types.js";
-export type { Attachment } from "./utils/attachment-utils.js";
+export type { Attachment } from "./utils/attachment-types.js";
 // Utils
-export { loadAttachment } from "./utils/attachment-utils.js";
 export { clearAuthToken, getAuthToken } from "./utils/auth-token.js";
 export { formatCost, formatModelCost, formatTokenCount, formatUsage } from "./utils/format.js";
 export { i18n, setLanguage, translations } from "./utils/i18n.js";
