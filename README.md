@@ -39,20 +39,19 @@ browser handles the hand-offs: it captures your voice, sends it off to be transc
 transcript to the language model, streams the reply out to be spoken, and plays the audio back.
 
 The memory is the one part that lives on your machine. Your browser stores it in its own local
-storage, on your computer, and sends it nowhere. A small backend sits in front of the language model
-to hold its key, so your browser never has to; bring your own key and your browser talks to the model
-directly.
+storage, on your computer, and sends it nowhere. A small backend sits in front of the language and
+speech models to hold the key, so your browser never has to; bring your own key and your browser talks
+to the language model directly.
 
-Because every model in the stack is open, you can host them yourself and run the whole thing on your
-own hardware; the hosted demo just runs them for you.
+The reference deployment reaches its models through that backend, but nothing is locked in: point it at
+your own OpenAI-compatible servers and run the whole thing on your own hardware instead.
 
 ### The voice loop
 
-When you finish a turn, your speech goes to an open
-[Whisper](https://github.com/SYSTRAN/faster-whisper) model and comes back as text. The language model
-reads it, along with whatever the memory surfaced for you, and streams a reply that an open-weights
-[Orpheus](https://github.com/canopyai/Orpheus-TTS) voice speaks aloud as it arrives, so you hear the first
-words before the last are written. The reference deployment runs
+When you finish a turn, your speech is sent off to a transcription model and comes back as text. The
+language model reads it, along with whatever the memory surfaced for you, and streams a reply that a
+text-to-speech model speaks aloud sentence by sentence — the next sentence is fetched while the current
+one plays, so you hear the first words before the last are written. The reference deployment runs
 [Kimi K3](https://openrouter.ai/moonshotai/kimi-k3); swapping it is a one-line change.
 
 ### The memory
@@ -81,14 +80,15 @@ already on its way while they work.
 
 ## Run it yourself
 
-Everything under the hood is open. Every model in the path has published weights, so you can stand
-the whole thing up on your own hardware and answer to no hosted service. This repo is the frontend;
-the model endpoints are all self-hostable:
+This repo is the frontend. The reference deployment reaches the language and speech models through a
+small metering backend that holds the key — but every leg speaks a plain OpenAI-compatible API, so you
+can point it at your own servers and answer to no hosted service:
 
-- **STT** — an open [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server over HTTP;
-  point the frontend at it with `VITE_STT_BASE`.
-- **TTS** — an open-weights [Orpheus](https://github.com/canopyai/Orpheus-TTS) model streamed over a WebSocket;
-  `VITE_TTS_BASE`.
+- **STT** — the batch transcription leg POSTs a WAV to the backend's `/v1/audio/transcriptions` route;
+  point the frontend at it with `VITE_STT_BASE`. Self-host by putting your own OpenAI-compatible
+  ASR (e.g. [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) behind that route.
+- **TTS** — the reply is spoken sentence by sentence via the backend's `/v1/audio/speech` route;
+  `VITE_TTS_BASE`. Self-host by putting your own OpenAI-compatible speech server behind it.
 - **LLM** — any OpenAI-compatible chat endpoint hosting an open-weight model, either through your own
   instance of the backend (`VITE_PROXY_BASE`) or straight to a provider with your own key in Settings.
 
@@ -96,7 +96,7 @@ The stock system prompt (`VOICE_SYSTEM_PROMPT` in `src/main.ts`) is written for 
 down to the model and voice it names. If you run your own, rewrite it to fit — a local home agent,
 say, may want the hardware awareness the hosted prompt has no use for.
 
-Full setup — env vars, the metering proxy, the voice servers, and a one-box reverse proxy with TLS —
+Full setup — env vars, the metering proxy, the voice routes, and a one-box reverse proxy with TLS —
 is in [`docs/self-hosting.md`](./docs/self-hosting.md).
 
 ## Stack

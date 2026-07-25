@@ -1,59 +1,40 @@
 # Myriapod self-hostable backends — sanitized template.
 #
-# Every service here is OPTIONAL; run only the ones whose feature you want:
-#   whisper  (GPU)  — speech-to-text.  Skip it for text-only.
-#   moshi    (GPU)  — text-to-speech.  Skip it for text-only. Commented below:
-#                     it is BUILT FROM SOURCE, not a pullable image.
+# Speech-to-text and text-to-speech ride the metering proxy's /v1/audio/*
+# routes, which forward to a cloud audio provider under the owner key — so the
+# default deploy runs NO speech containers. Only the two CPU services below are
+# part of the standard self-host:
 #   embed    (CPU)  — memory-dedup embeddings. Skip it; dedup degrades to
 #                     string similarity (fail-soft).
 #   searxng  (CPU)  — web_search backend. Skip it to drop web search.
+#
+# OPTIONAL — self-host speech instead of cloud: run your own OpenAI-compatible
+# ASR/TTS and point the proxy's audio routes (or dedicated Caddy routes) at them.
+# A faster-whisper block is included commented-out as a starting point; a TTS
+# service that speaks the OpenAI /v1/audio/speech contract slots in the same way.
 #
 # Fill in every <placeholder> before use. Bind ports / networks to taste; the
 # values below are container-internal defaults.
 
 services:
-  # --- Speech-to-text (GPU) -------------------------------------------------
+  # --- Speech-to-text (GPU) — OPTIONAL self-host override -------------------
   # faster-whisper behind an OpenAI-compatible API:
   #   POST /v1/audio/transcriptions  (multipart file, response_format=json)
-  # The browser resamples to 16 kHz mono WAV and POSTs it here.
-  whisper:
-    image: fedirz/faster-whisper-server:latest-cuda
-    environment:
-      # distil-large-v3 is a fast, accurate default. Any faster-whisper model works.
-      WHISPER__MODEL: distil-large-v3
-      WHISPER__INFERENCE_DEVICE: cuda
-      # Keep the model resident. The default TTL (300s) unloads the model when idle,
-      # so the first request after a quiet spell pays a slow cold reload (tens of
-      # seconds) and the client may time out. -1 = never unload.
-      WHISPER__TTL: "-1"
-    ports:
-      - "8000:8000"   # container serves the OpenAI API on 8000
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  # --- Text-to-speech (GPU) — BUILD FROM SOURCE, no pullable image ----------
-  # moshi-server is not published as a container. Build it from Kyutai's repos:
-  #   https://github.com/kyutai-labs/unmute   (vendors moshi-server)
-  #   https://github.com/kyutai-labs/moshi
-  # Follow the unmute build, then run:
-  #   worker --config configs/tts.toml
-  # It exposes the streaming WebSocket  /api/tts_streaming  on port 8080 and
-  # needs a GPU plus a HuggingFace token to fetch weights. The tts.toml
-  # authorized_ids MUST include whatever you set as VITE_TTS_AUTH in the
-  # frontend (the browser passes it as the auth_id query param).
+  # The browser resamples to 16 kHz mono WAV and POSTs it here. Uncomment and
+  # route VITE_STT_BASE at it only if you are self-hosting STT instead of cloud.
   #
-  # moshi:
-  #   image: <build-this-yourself-from-kyutai/unmute>
-  #   command: ["worker", "--config", "configs/tts.toml"]
+  # whisper:
+  #   image: fedirz/faster-whisper-server:latest-cuda
   #   environment:
-  #     HUGGING_FACE_HUB_TOKEN: <hf-token>
+  #     # distil-large-v3 is a fast, accurate default. Any faster-whisper model works.
+  #     WHISPER__MODEL: distil-large-v3
+  #     WHISPER__INFERENCE_DEVICE: cuda
+  #     # Keep the model resident. The default TTL (300s) unloads the model when idle,
+  #     # so the first request after a quiet spell pays a slow cold reload (tens of
+  #     # seconds) and the client may time out. -1 = never unload.
+  #     WHISPER__TTL: "-1"
   #   ports:
-  #     - "8080:8080"
+  #     - "8000:8000"   # container serves the OpenAI API on 8000
   #   deploy:
   #     resources:
   #       reservations:

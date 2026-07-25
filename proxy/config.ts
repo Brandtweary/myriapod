@@ -74,6 +74,15 @@ export const config = {
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
+
+	// --- Cloud audio (STT / TTS) ----------------------------------------------
+	// The voice cascade's speech legs ride OpenRouter's audio endpoints through the
+	// proxy, so the browser never holds a key. The model + default voice are forced
+	// server-side (the browser sends only audio / text), keeping the owner key off
+	// arbitrary audio models. Batch, not streaming — TTS is sentence-chunked upstream.
+	sttModel: process.env.STT_MODEL ?? "openai/whisper-large-v3",
+	ttsModel: process.env.TTS_MODEL ?? "hexgrad/kokoro-82m",
+	ttsVoice: process.env.TTS_VOICE ?? "am_onyx",
 	// Hard ceiling on a single upstream (OpenRouter) request, including the streamed
 	// body. Bounds a forward stuck on a dead connection (e.g. the client changed
 	// networks / dropped a VPN mid-stream) so it fails fast instead of hanging.

@@ -13,8 +13,11 @@
 //
 // PART 2 (WhisperClient): a stateless HTTP client. Per utterance it resamples the
 // 24kHz PCM to 16kHz, encodes a 16-bit mono WAV, and POSTs it as multipart/form-data
-// to a faster-whisper-server ASR endpoint, which returns `{"text":...}` JSON. No
-// socket, no marker protocol, no msgpack — connect()/close() are no-ops.
+// to the metering proxy's `/v1/audio/transcriptions` route (which injects the owner
+// key + forced Whisper model and forwards to OpenRouter's audio endpoint), which
+// returns `{"text":...}` JSON. No socket, no marker protocol — connect()/close() are
+// no-ops. The multipart shape is the OpenAI transcription contract, so a self-hoster
+// can point VITE_STT_BASE straight at any OpenAI-compatible ASR instead.
 //
 // Uses the project's dbg/dbgWarn instrumentation rather than bare console.
 
@@ -22,13 +25,14 @@ import { dbg, dbgWarn } from "./debug.js";
 
 // === Configuration ===========================================================
 
-// The Whisper ASR HTTP endpoint. Override via VITE_STT_BASE for deploy.
+// The transcription HTTP endpoint. Dev points at the local proxy; deploy overrides
+// via VITE_STT_BASE (an https:// URL on the public host, same origin as the proxy).
 const DEFAULT_STT_URL =
-	import.meta.env.VITE_STT_BASE ?? "http://localhost:8123/api/asr-http";
+	import.meta.env.VITE_STT_BASE ?? "http://127.0.0.1:8790/v1/audio/transcriptions";
 
-// Optional bearer token for an auth-gated Whisper endpoint. Our faster-whisper has
-// none (undefined ⇒ no Authorization header); a self-hoster fronting Whisper with
-// auth sets VITE_STT_AUTH.
+// Optional bearer token for an auth-gated endpoint. The proxy route needs none (the
+// browser holds no key — the owner key is injected server-side); a self-hoster
+// fronting their own ASR with auth sets VITE_STT_AUTH.
 const DEFAULT_STT_AUTH: string | undefined = import.meta.env.VITE_STT_AUTH;
 
 // Mic capture constraints — mono, echo-cancelled (this drives a speaker-based
