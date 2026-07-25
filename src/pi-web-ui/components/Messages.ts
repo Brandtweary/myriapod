@@ -12,6 +12,11 @@ import { renderTool } from "../tools/index.js";
 import type { Attachment } from "../utils/attachment-types.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
+// Side-effect imports: these register the <markdown-block> and <code-block> custom
+// elements this file (and ThinkingBlock) renders. Nothing else in the bundle imports
+// them, so without these lines the tags are undefined and all chat text renders blank.
+import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
+import "@mariozechner/mini-lit/dist/CodeBlock.js";
 import "./ThinkingBlock.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
