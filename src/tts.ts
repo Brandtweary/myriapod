@@ -344,15 +344,42 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 				body: JSON.stringify({ input: text, voice, response_format: "pcm" }),
 				signal: controller.signal,
 			});
-			if (!res.ok) {
+			if (!res.ok || !res.body) {
 				dbgWarn(`[tts] /audio/speech ${res.status}; skipping sentence`);
 				return;
 			}
-			const buf = await res.arrayBuffer();
-			// A superseded run (barge-in / newer utterance) must not play — drop the audio.
-			if (this.aborted || myGen !== this.gen) return;
-			this.enqueuePcm(buf);
-			dbg(`[tts] spoke "${text.slice(0, 40)}" (${buf.byteLength} bytes)`);
+			// Read the PCM as it streams in and pace frames the moment bytes arrive, so
+			// the first audio plays at the endpoint's time-to-first-byte instead of after
+			// the whole clip downloads (the latency win). A 16-bit LE sample can straddle
+			// two network chunks, so carry a leftover odd byte between reads.
+			const reader = res.body.getReader();
+			let carry: Uint8Array | null = null;
+			let total = 0;
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				// Superseded (barge-in / newer utterance): stop reading, drop the rest.
+				if (this.aborted || myGen !== this.gen) {
+					await reader.cancel().catch(() => {});
+					return;
+				}
+				if (!value || !value.length) continue;
+				let bytes: Uint8Array = value;
+				if (carry) {
+					const merged = new Uint8Array(carry.length + value.length);
+					merged.set(carry);
+					merged.set(value, carry.length);
+					bytes = merged;
+					carry = null;
+				}
+				const usable = bytes.length - (bytes.length % 2);
+				if (usable < bytes.length) carry = bytes.slice(usable);
+				if (usable > 0) {
+					this.enqueuePcmBytes(bytes.subarray(0, usable));
+					total += usable;
+				}
+			}
+			dbg(`[tts] spoke "${text.slice(0, 40)}" (${total} bytes streamed)`);
 		} catch (err) {
 			// AbortError on barge-in is expected; anything else is a transient loss.
 			if (!this.aborted) dbgWarn(`[tts] sentence fetch failed: ${String(err)}`);
@@ -362,17 +389,20 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		}
 	}
 
-	// Convert a raw 16-bit LE mono PCM buffer to Float32 and slice it into fixed-size
-	// frames, each queued for paced release. Little-endian is the wire format the
-	// upstream emits (audio/pcm;rate=24000;channels=1).
-	private enqueuePcm(buf: ArrayBuffer): void {
-		const int16 = new Int16Array(buf.byteLength % 2 === 0 ? buf : buf.slice(0, buf.byteLength - 1));
-		if (!int16.length) return;
+	// Convert an even-length run of raw 16-bit LE mono PCM bytes to Float32 and slice it
+	// into fixed-size frames, each queued for paced release. A DataView reads the
+	// samples little-endian without any buffer-alignment assumption (a streamed chunk's
+	// byteOffset is arbitrary). Little-endian is the wire format the upstream emits
+	// (audio/pcm;rate=24000;channels=1).
+	private enqueuePcmBytes(bytes: Uint8Array): void {
+		const n = bytes.length >> 1;
+		if (!n) return;
 		this.sawAudio = true;
-		for (let off = 0; off < int16.length; off += FRAME_SAMPLES) {
-			const end = Math.min(off + FRAME_SAMPLES, int16.length);
-			const frame = new Float32Array(end - off);
-			for (let i = off; i < end; i++) frame[i - off] = int16[i] / 32768;
+		const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+		for (let s = 0; s < n; s += FRAME_SAMPLES) {
+			const count = Math.min(FRAME_SAMPLES, n - s);
+			const frame = new Float32Array(count);
+			for (let i = 0; i < count; i++) frame[i] = dv.getInt16((s + i) * 2, true) / 32768;
 			this.scheduleFrame(frame);
 		}
 	}

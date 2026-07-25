@@ -94,11 +94,13 @@ external services:
   `{text, usage}` JSON. Stateless. `src/stt.ts`. Configured via `VITE_STT_BASE` (the proxy origin).
 - **TTS (batch per sentence)** — the proxy's `POST /v1/audio/speech` route. The `SentenceChunker` splits
   the reply and each sentence chunk is POSTed as `{input, voice?, response_format?}`; the proxy injects
-  the owner key + a forced speech model + default voice and forwards to OpenRouter's `/audio/speech`,
-  streaming back raw audio. Default `response_format` is `pcm` (raw 16-bit LE mono 24 kHz), consumed by
-  the audio-output worklet with no decode. The fetch of sentence N+1 overlaps playback of sentence N, so
-  latency approximates streaming and playback is gapless. `src/tts.ts`. Configured via `VITE_TTS_BASE`
-  (the proxy origin).
+  the owner key + a forced speech model + default voice and streams OpenRouter's `/audio/speech` response
+  straight back. Default `response_format` is `pcm` (raw 16-bit LE mono 24 kHz); the frontend reads the
+  HTTP response incrementally and paces frames into the audio-output worklet as they arrive (no decode),
+  so first audio plays at the endpoint's time-to-first-byte rather than after the whole clip downloads.
+  The fetch of sentence N+1 overlaps playback of sentence N, so playback is gapless. A realtime-optimized
+  speech model with a pinned provider keeps the per-sentence round-trip low. `src/tts.ts`. Configured via
+  `VITE_TTS_BASE` (the proxy origin).
 - **Embeddings** — the pipeline's mint-time dedup embeds each term (description) via the proxy's
   `/v1/embed`, a passthrough to a self-hosted embedding-inference container (HF text-embeddings-
   inference, MiniLM-class). The 384-dim vector is stored on the term and rides the lexicon export;
@@ -237,7 +239,8 @@ on `127.0.0.1:8790`.
   `openrouter.ts` (forward +
   meter; mint sub-keys), `anon.ts` (the grant gates), `voice-broker.ts` (the voice-session broker),
   `config.ts` (adds `STT_MODEL` / `TTS_MODEL` / `TTS_VOICE` — the server-forced audio model + default
-  voice), `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
+  voice — and `TTS_PROVIDER`, which pins the speech model's serving provider so OpenRouter can't route
+  to a slow one), `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
   `proxy/.env` (gitignored); `.env.example` documents the shape. The two audio routes are per-IP
   rate-limited, owner-key injected, and model-forced server-side, mirroring the `/v1/embed` and
   `/v1/web-search` passthroughs.

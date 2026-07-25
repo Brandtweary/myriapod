@@ -409,12 +409,18 @@ app.post("/v1/audio/speech", async (c) => {
 		return c.json({ error: `input too long (max ${AUDIO_MAX_TTS_INPUT_CHARS} chars)` }, 400);
 	}
 	const format = body.response_format === "mp3" ? "mp3" : "pcm";
-	const upstreamBody = {
+	const upstreamBody: Record<string, unknown> = {
 		model: config.ttsModel,
 		input,
 		voice: typeof body.voice === "string" && body.voice ? body.voice : config.ttsVoice,
 		response_format: format,
 	};
+	// Pin the serving provider so OpenRouter can't route TTS to a slow instance — an
+	// unpinned model may land on a provider that streams the clip out over tens of
+	// seconds, wrecking the per-sentence latency the voice UX depends on.
+	if (config.ttsProvider) {
+		upstreamBody.provider = { order: [config.ttsProvider], allow_fallbacks: false };
+	}
 
 	let res: Response;
 	try {
@@ -431,18 +437,19 @@ app.post("/v1/audio/speech", async (c) => {
 		console.error("[proxy] tts fetch failed:", err);
 		return c.json({ error: "speech backend unreachable" }, 502);
 	}
-	if (!res.ok) {
+	if (!res.ok || !res.body) {
 		const errBody = await res.text().catch(() => "");
 		console.error(`[proxy] ✗ tts upstream ${res.status} body=${errBody.slice(0, 500)}`);
 		return c.json({ error: "speech synthesis failed", status: res.status }, 502);
 	}
-	// Buffer the whole clip (one sentence ≈ tens of KB) rather than streaming the
-	// upstream body through: the frontend consumes it as a single arrayBuffer anyway,
-	// and a straight passthrough leaves the client connection idle during upstream
-	// synthesis, tripping Bun.serve's idleTimeout mid-response. Preserve the upstream
-	// content-type (audio/pcm;rate=24000;channels=1 for pcm, audio/mpeg for mp3).
-	const audio = await res.arrayBuffer();
-	return new Response(audio, {
+	// Stream the upstream audio straight through so the browser gets the first PCM
+	// bytes at the upstream's time-to-first-byte and can start playing immediately
+	// (the frontend paces frames as they arrive) — buffering the whole clip here would
+	// hold every byte until synthesis finished, adding the full clip time to the
+	// per-sentence latency. Bun.serve's raised idleTimeout keeps the passthrough from
+	// being aborted mid-stream. Preserve the upstream content-type
+	// (audio/pcm;rate=24000;channels=1 for pcm, audio/mpeg for mp3).
+	return new Response(res.body, {
 		status: 200,
 		headers: { "Content-Type": res.headers.get("content-type") ?? "application/octet-stream" },
 	});
