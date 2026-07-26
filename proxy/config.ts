@@ -74,21 +74,6 @@ export const config = {
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
-
-	// --- Cloud audio (STT / TTS) ----------------------------------------------
-	// The voice cascade's speech legs ride OpenRouter's audio endpoints through the
-	// proxy, so the browser never holds a key. The model + default voice are forced
-	// server-side (the browser sends only audio / text), keeping the owner key off
-	// arbitrary audio models. One HTTP request per sentence chunk.
-	sttModel: process.env.STT_MODEL ?? "openai/whisper-large-v3",
-	// A realtime-optimized speech model — the per-sentence round-trip is the
-	// acceptance metric. ttsProvider pins the serving provider so OpenRouter can't
-	// route to a slow one (an unpinned model can land on a provider that dribbles the
-	// clip out over tens of seconds); empty disables the pin. Must name a provider that
-	// actually serves ttsModel.
-	ttsModel: process.env.TTS_MODEL ?? "deepgram/aura-2",
-	ttsVoice: process.env.TTS_VOICE ?? "aura-2-orion-en",
-	ttsProvider: process.env.TTS_PROVIDER ?? "deepgram",
 	// Hard ceiling on a single upstream (OpenRouter) request, including the streamed
 	// body. Bounds a forward stuck on a dead connection (e.g. the client changed
 	// networks / dropped a VPN mid-stream) so it fails fast instead of hanging.

@@ -193,26 +193,6 @@ function embedRateLimited(ip: string): boolean {
 	return hits.length > EMBED_MAX;
 }
 
-// In-memory per-IP sliding-window rate limit for the cloud-audio passthroughs
-// (/v1/audio/transcriptions + /v1/audio/speech). Unlike embed/web-search (which hit
-// free self-hosted backends), these spend the owner key on OpenRouter — but the
-// per-call cost is sub-cent (a whisper transcription ≈ $0.0015/min, a kokoro
-// sentence a fraction of a cent), so a per-IP window bounding burst abuse is the
-// guard, mirroring the open-passthrough posture. STT fires once per turn; TTS fires
-// once per sentence, so the ceiling is generous. Not principal-metered.
-const AUDIO_WINDOW_MS = 60_000;
-const AUDIO_MAX = 120; // a chatty voice turn POSTs one TTS request per sentence
-const AUDIO_MAX_TTS_INPUT_CHARS = 4000; // one sentence chunk; bounds a single speech spend
-const audioHits = new Map<string, number[]>();
-function audioRateLimited(ip: string): boolean {
-	const now = Date.now();
-	const cutoff = now - AUDIO_WINDOW_MS;
-	const hits = (audioHits.get(ip) ?? []).filter((t) => t > cutoff);
-	hits.push(now);
-	audioHits.set(ip, hits);
-	return hits.length > AUDIO_MAX;
-}
-
 // In-memory per-IP sliding-window rate limit for the email-signup form. A public
 // endpoint (anyone can submit), so this is the only guard; not money, not metered.
 const SUBSCRIBE_WINDOW_MS = 60_000;
@@ -279,7 +259,6 @@ function pruneWindowMap(map: Map<string, number[]>, windowMs: number): void {
 const rateMapSweeper = setInterval(() => {
 	pruneWindowMap(webSearchHits, WEB_SEARCH_WINDOW_MS);
 	pruneWindowMap(embedHits, EMBED_WINDOW_MS);
-	pruneWindowMap(audioHits, AUDIO_WINDOW_MS);
 	pruneWindowMap(subscribeHits, SUBSCRIBE_WINDOW_MS);
 	pruneWindowMap(redeemHits, REDEEM_WINDOW_MS);
 	const now = Date.now();
@@ -332,127 +311,6 @@ app.post("/v1/embed", async (c) => {
 	}
 	// text-embeddings-inference returns number[][] directly; pass it through.
 	return c.json((await res.json()) as number[][]);
-});
-
-// Cloud speech-to-text. The browser POSTs the utterance as multipart/form-data
-// (a 16-bit mono WAV under `file`), exactly the OpenAI transcription contract; we
-// inject the owner key + the forced model and forward to OpenRouter's
-// /audio/transcriptions, returning its {text, usage} JSON. The model is forced
-// server-side so the owner key can never fund an arbitrary (expensive) STT model.
-app.post("/v1/audio/transcriptions", async (c) => {
-	if (audioRateLimited(clientIp(c))) {
-		return c.json({ error: "rate limit — slow down" }, 429);
-	}
-	if (!config.ownerKey) {
-		return c.json({ error: "proxy is missing its upstream key" }, 500);
-	}
-	let inForm: FormData;
-	try {
-		inForm = await c.req.formData();
-	} catch {
-		return c.json({ error: "expected multipart/form-data" }, 400);
-	}
-	const file = inForm.get("file");
-	if (!(file instanceof Blob)) {
-		return c.json({ error: "missing audio file" }, 400);
-	}
-	const outForm = new FormData();
-	outForm.append("file", file, (file as File).name || "audio.wav");
-	outForm.append("model", config.sttModel);
-	outForm.append("response_format", "json");
-
-	let res: Response;
-	try {
-		res = await fetch(`${config.openrouterBase}/audio/transcriptions`, {
-			method: "POST",
-			headers: { Authorization: `Bearer ${config.ownerKey}` },
-			body: outForm,
-			// OpenRouter enforces a 60s upstream timeout on transcription; match it.
-			signal: AbortSignal.timeout(60_000),
-		});
-	} catch (err) {
-		console.error("[proxy] stt fetch failed:", err);
-		return c.json({ error: "transcription backend unreachable" }, 502);
-	}
-	if (!res.ok) {
-		const body = await res.text().catch(() => "");
-		console.error(`[proxy] ✗ stt upstream ${res.status} body=${body.slice(0, 500)}`);
-		return c.json({ error: "transcription failed", status: res.status }, 502);
-	}
-	// Pass through {text, usage}; the browser reads only `.text`.
-	return c.json((await res.json()) as Record<string, unknown>);
-});
-
-// Cloud text-to-speech. The browser POSTs {input, voice?, response_format?} for ONE
-// sentence chunk (the SentenceChunker already split the reply); we inject the owner
-// key + forced model and forward to OpenRouter's /audio/speech, streaming the raw
-// audio bytes straight back. Default response_format is `pcm` (raw 16-bit LE mono
-// 24 kHz — what the playback worklet consumes with no decode). The model + default
-// voice are forced server-side (owner-key protection); the browser may only pick a
-// voice the forced model exposes and mp3-vs-pcm.
-app.post("/v1/audio/speech", async (c) => {
-	if (audioRateLimited(clientIp(c))) {
-		return c.json({ error: "rate limit — slow down" }, 429);
-	}
-	if (!config.ownerKey) {
-		return c.json({ error: "proxy is missing its upstream key" }, 500);
-	}
-	let body: { input?: unknown; voice?: unknown; response_format?: unknown };
-	try {
-		body = (await c.req.json()) as typeof body;
-	} catch {
-		return c.json({ error: "invalid JSON body" }, 400);
-	}
-	const input = typeof body.input === "string" ? body.input : "";
-	if (!input.trim()) return c.json({ error: "missing input text" }, 400);
-	if (input.length > AUDIO_MAX_TTS_INPUT_CHARS) {
-		return c.json({ error: `input too long (max ${AUDIO_MAX_TTS_INPUT_CHARS} chars)` }, 400);
-	}
-	const format = body.response_format === "mp3" ? "mp3" : "pcm";
-	const upstreamBody: Record<string, unknown> = {
-		model: config.ttsModel,
-		input,
-		voice: typeof body.voice === "string" && body.voice ? body.voice : config.ttsVoice,
-		response_format: format,
-	};
-	// Pin the serving provider so OpenRouter can't route TTS to a slow instance — an
-	// unpinned model may land on a provider that streams the clip out over tens of
-	// seconds, wrecking the per-sentence latency the voice UX depends on.
-	if (config.ttsProvider) {
-		upstreamBody.provider = { order: [config.ttsProvider], allow_fallbacks: false };
-	}
-
-	let res: Response;
-	try {
-		res = await fetch(`${config.openrouterBase}/audio/speech`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${config.ownerKey}`,
-			},
-			body: JSON.stringify(upstreamBody),
-			signal: AbortSignal.timeout(60_000),
-		});
-	} catch (err) {
-		console.error("[proxy] tts fetch failed:", err);
-		return c.json({ error: "speech backend unreachable" }, 502);
-	}
-	if (!res.ok || !res.body) {
-		const errBody = await res.text().catch(() => "");
-		console.error(`[proxy] ✗ tts upstream ${res.status} body=${errBody.slice(0, 500)}`);
-		return c.json({ error: "speech synthesis failed", status: res.status }, 502);
-	}
-	// Stream the upstream audio straight through so the browser gets the first PCM
-	// bytes at the upstream's time-to-first-byte and can start playing immediately
-	// (the frontend paces frames as they arrive) — buffering the whole clip here would
-	// hold every byte until synthesis finished, adding the full clip time to the
-	// per-sentence latency. Bun.serve's raised idleTimeout keeps the passthrough from
-	// being aborted mid-stream. Preserve the upstream content-type
-	// (audio/pcm;rate=24000;channels=1 for pcm, audio/mpeg for mp3).
-	return new Response(res.body, {
-		status: 200,
-		headers: { "Content-Type": res.headers.get("content-type") ?? "application/octet-stream" },
-	});
 });
 
 // Feature-release email capture (About page). Open + rate-limited — a public form.
@@ -790,12 +648,7 @@ if (import.meta.main) {
 		`[proxy] myriapod-proxy listening on http://${config.host}:${config.port} | ` +
 			`origins=${config.allowedOrigins.join(", ")}`,
 	);
-	// idleTimeout must exceed the longest upstream wait — the client connection sits
-	// idle while we await OpenRouter (up to the 120s chat timeout / 60s audio timeout),
-	// and Bun.serve's 10s default would otherwise abort the response mid-flight (a slow
-	// audio synthesis or a long reasoning delay before the first chat token). 255 is
-	// Bun's max.
-	Bun.serve({ hostname: config.host, port: config.port, idleTimeout: 255, fetch: app.fetch });
+	Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch });
 }
 
 export { app, db, voiceBroker };

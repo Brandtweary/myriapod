@@ -1,27 +1,32 @@
-// tts.ts — the text-to-speech half of the browser-orchestrated voice cascade. The
-// Pi agent drives the LLM itself and its streamed text is piped through here to be
-// spoken. The speech leg is a batch HTTP call per sentence: each sentence chunk is
-// POSTed to the metering proxy's `/v1/audio/speech` route (which injects the owner
-// key and forwards to OpenRouter's audio endpoint), and the raw 24 kHz PCM bytes that
-// come back are paced to ~1x realtime and posted into the shared
-// audio-output-processor worklet — no decode, no WebSocket, no msgpack.
+// tts.ts — the streaming text-to-speech half of the browser-orchestrated voice
+// cascade. Unlike the old server-side Unmute cascade (one WebSocket carrying
+// STT→LLM→TTS), this module is a *standalone* TTS leg: the Pi agent drives the
+// LLM itself and its streamed text is piped through here to be spoken. It talks
+// directly to a Kyutai moshi-server `/api/tts_streaming` endpoint (msgpack over a
+// WebSocket), requesting raw 24 kHz PCM frames (PcmMessagePack) that are paced to ~1x
+// realtime and posted into the shared audio-output-processor worklet — no Opus decode,
+// no Ogg state.
 //
-// One request per sentence is what keeps latency ≈ streaming: the SentenceChunker
-// (PART 1) splits the reply as it generates, so the first sentence is spoken while the
-// rest is still being produced, and while sentence N plays its PCM the fetch for
-// sentence N+1 is already in flight. The upstream returns a whole sentence's PCM in one
-// response; the pacing queue (scheduleFrame) releases those frames at ~1x so the
-// worklet's FIFO stays near-empty and playback across sentences is gapless.
+// moshi treats one WS session as ONE continuous generation and garbles if you feed
+// it several sentences, so each sentence gets its own session. PCM output is what
+// makes that safe: an Opus decoder holds per-stream demux state and corrupts when fed
+// back-to-back independent Ogg streams, whereas PCM frames are stateless and simply
+// queue in the worklet's FIFO in arrival order. moshi bursts that PCM faster than
+// realtime, so frames are paced to ~1x before the worklet (see scheduleFrame) — the job
+// Unmute's backend used to do; without it the worklet buffer overflows and garbles long
+// replies.
 //
 // Three parts:
 //   1. SentenceChunker — buffers LLM text tokens, flushes sentence-sized chunks.
-//   2. CloudTtsSynthesizer — the per-sentence /audio/speech client + PCM playback.
-//   3. SpeechSynthesizer — the swappable interface.
+//   2. KyutaiTtsSynthesizer — the moshi TTS WebSocket client + PCM playback.
+//   3. SpeechSynthesizer — the swappable interface (cloud-TTS fallbacks later
+//      implement the same shape for graceful degradation).
 //
-// The orchestrator owns the AudioContext (created at 24 kHz to match the PCM sample
-// rate so no resampling is needed) and the audio-output-processor worklet, passing the
-// worklet in so playback is shared with the rest of the app.
+// The orchestrator owns the AudioContext (created at 24 kHz to match moshi's PCM so
+// no resampling is needed) and the audio-output-processor worklet, passing the worklet
+// in so playback is shared with the rest of the app.
 
+import { encode, decode } from "@msgpack/msgpack";
 import { dbg, dbgWarn, dbgError } from "./debug.js";
 
 // =============================================================================
@@ -139,134 +144,152 @@ export async function* chunkStream(tokens: AsyncIterable<string>): AsyncIterable
 // PART 3 (interface) — the swappable synthesizer seam
 // =============================================================================
 
-// The synthesizer seam: CloudTtsSynthesizer implements this; a future alternate
-// backend could implement the same shape, so the orchestrator can swap synthesizers
-// without caring which is live.
+// The degradation seam: the Tier-1 self-hosted moshi backend implements this,
+// and later cloud-TTS fallbacks implement the same shape, so the orchestrator
+// can swap synthesizers without caring which is live.
 export interface SpeechSynthesizer {
-	// Streaming: pipe LLM tokens → chunker → per-sentence /audio/speech.
+	// Streaming: pipe LLM tokens → chunker → TTS WS (Tier-1 path).
 	speak(textStream: AsyncIterable<string>): Promise<void>;
-	// One-shot: synthesize a whole, already-complete string.
+	// One-shot fallback: synthesize a whole, already-complete string (Tier-3 path).
 	speak(fullText: string): Promise<void>;
-	// Barge-in: cut audio immediately (reset the playback worklet + abort in-flight fetch).
+	// Barge-in: cut audio immediately (reset the playback worklet + close the WS).
 	stop(): void;
 }
 
 export interface TtsConfig {
-	// Override the /audio/speech endpoint (else VITE_TTS_BASE / the localhost default).
+	// Override the WS endpoint (else VITE_TTS_BASE / the localhost default).
 	baseUrl?: string;
-	// Voice id, forwarded to the proxy. Empty → the proxy's server-side default voice
-	// (the browser can only pick a voice the forced upstream model exposes).
+	// moshi voice id (a path_on_server). Defaults to the Václav "developer-1" voice.
 	voice?: string;
-	// Fired (at most once per synth) when a whole run() produced zero audio bytes —
-	// i.e. the text rendered but nothing spoke (backend unreachable/failing all turn).
+	// Classifier-free-guidance strength.
+	cfgAlpha?: number;
+	// moshi `public_token` (see the auth caveat below).
+	apiKey?: string;
+	// Fired (at most once per synth) when a whole run() produced zero Audio frames —
+	// i.e. the text rendered but nothing spoke (moshi unreachable/failing all turn).
 	// The orchestrator wires this to a user-facing notice; unset = silent (default).
 	onVoiceUnavailable?: () => void;
 }
 
 // =============================================================================
-// PART 2 — cloud TTS client (batch /audio/speech, per sentence)
+// PART 2 — Kyutai moshi TTS WebSocket client
 // =============================================================================
 
 const ENV = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
 
-// The /audio/speech endpoint. Dev points at the local proxy; deploy overrides via
-// VITE_TTS_BASE (an https:// URL on the public host, same origin as the proxy).
-const DEFAULT_TTS_BASE = ENV.VITE_TTS_BASE ?? "http://127.0.0.1:8790/v1/audio/speech";
-// Voice id, forwarded to the proxy. Empty by default → the proxy's server-side
-// default voice; override with VITE_TTS_VOICE to pick another voice the upstream
-// model exposes.
-const DEFAULT_VOICE = ENV.VITE_TTS_VOICE ?? "";
+// Dev default points at a local moshi-server. Deploy overrides via VITE_TTS_BASE
+// (a wss:// URL on the public host).
+const DEFAULT_TTS_BASE = ENV.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming";
+// The moshi voice id (a path_on_server). Override with VITE_TTS_VOICE to select a
+// voice your own moshi-server has; the default is the stock "developer-1" male voice.
+const DEFAULT_VOICE = ENV.VITE_TTS_VOICE ?? "unmute-prod-website/developer-1.mp3";
+// Classifier-free-guidance strength. Override with VITE_TTS_CFG_ALPHA.
+const DEFAULT_CFG_ALPHA = ENV.VITE_TTS_CFG_ALPHA ? Number(ENV.VITE_TTS_CFG_ALPHA) : 1.5;
 
-// The upstream returns raw 16-bit LE mono PCM at 24 kHz (response_format "pcm"). The
-// shared AudioContext is created at this rate (see main.ts) so frames play without
-// any resampling.
+// AUTH: moshi reads the token from the `auth_id` query param when no kyutai-api-key
+// header is present; a browser WS can't set headers, so auth_id is the path. Verified
+// against moshi-server main.rs (`PyStreamingQuery { auth_id, format, voice }` backs the
+// /api/tts_streaming Py module). Override with VITE_TTS_AUTH to match your moshi's
+// authorized_ids; the default is the conventional demo token.
+const DEFAULT_API_KEY = ENV.VITE_TTS_AUTH ?? "public_token";
+
+// moshi streams PCM at 24 kHz (PcmMessagePack). The shared AudioContext is created at
+// this rate (see main.ts) so frames play without any resampling.
 export const TTS_SAMPLE_RATE = 24000;
 
-// A whole sentence's PCM arrives in one response; it's sliced into frames of this many
-// samples before pacing, so the drain timer has fine-enough granularity to release
-// audio at ~1x realtime (80 ms per frame at 24 kHz).
-const FRAME_SAMPLES = 1920;
-
-// Ceiling on how long one sentence's /audio/speech fetch may take before it's
-// abandoned so the loop advances to the next sentence. OpenRouter caps audio upstreams
-// at 60 s; a sentence synthesizes in well under that.
-const SPEECH_FETCH_TIMEOUT_MS = 60_000;
-
-// The upstream returns a whole sentence's PCM in one response, faster than realtime.
-// The playback worklet's FIFO is sized for ~1x realtime input; fed a whole reply's PCM
-// at once it overflows its 30s cap and collapses to an 80ms cap, shredding most of the
-// audio. So we pace: hold each frame and release it to the worklet at its playout
-// position minus a small lookahead, keeping the worklet at ~1x and its buffer
-// near-empty. The pace clock spans the whole utterance (across the per-sentence
-// fetches), so a sentence keeps playing while the next one is being fetched — gapless.
+// moshi generates ~3-4x faster than realtime and dumps a whole reply's PCM in a
+// burst. The playback worklet's FIFO is sized for ~1x realtime input (the rate
+// Unmute's server-side RealtimeQueue used to enforce before we ripped Unmute out);
+// fed the raw burst, it overflows its 30s cap on a long reply and collapses to an
+// 80ms cap, shredding most of the audio. So we re-add the pacing here: hold each
+// frame and release it to the worklet at its playout position minus a small
+// lookahead, keeping the worklet at ~1x and its buffer near-empty.
 const PLAYBACK_LOOKAHEAD_MS = 300;
 const DRAIN_INTERVAL_MS = 15;
 
-// How many upcoming sentences to fetch concurrently, ahead of playout. A per-sentence
-// /audio/speech fetch (synthesis + download) is comparable to — often longer than — a
-// short sentence's spoken duration, so fetching strictly one sentence at a time lets the
-// pace queue drain to empty between short sentences: an audible beat at each boundary.
-// Prefetching several sentences keeps the fetch pipeline running ahead of 1x playout so
-// the pace queue stays fed and playback is continuous across sentence boundaries.
-const PREFETCH_SENTENCES = 3;
+// moshi has a startup race — the WS opens before the model is loaded and a
+// {type:"Ready"} message is sent. We wait for Ready before sending any text,
+// polling up to MAX_READY_CHECKS × READY_CHECK_MS before giving up (a ready
+// socket sends anyway; a socket that never opened is skipped). Kept tight so a
+// missed/renamed Ready costs a few seconds of dead air, not ~10s per sentence.
+const MAX_READY_CHECKS = 3;
+const READY_CHECK_MS = 1000;
 
-export class CloudTtsSynthesizer implements SpeechSynthesizer {
-	// AbortControllers for the in-flight sentence fetches (several run concurrently via
-	// the prefetch pipeline), so stop() can cancel every one of them promptly.
-	private inflight = new Set<AbortController>();
+// Ceiling on how long endSession() waits for a session's `done` (ws close/error).
+// A moshi that streams PCM but never closes would otherwise wedge run() forever;
+// on timeout we close the socket so the sentence loop advances. Sized a few
+// seconds beyond expected per-sentence generation time (moshi runs >realtime).
+const SESSION_DONE_TIMEOUT_MS = 8000;
+
+
+// Inbound message shapes (msgpack). We act on Ready + Audio; Text timing
+// frames are accepted and ignored for now.
+type TtsServerMessage =
+	| { type: "Ready" }
+	| { type: "Audio"; pcm: number[] }
+	| { type: "Text"; text: string; start_s?: number; stop_s?: number }
+	| { type: string; [k: string]: unknown };
+
+export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
+	private ws?: WebSocket;
+	// Per-connection readiness flag (reset on each new socket).
+	private ready = false;
+	// Resolvers for in-flight waitForReady() sleeps, fired early when Ready lands.
+	private readyResolvers: Array<() => void> = [];
 	// Set by stop(); checked throughout run() so a barge-in unwinds promptly.
 	private aborted = false;
-	// Whether any audio arrived during the current run() (reset per run).
+	// Whether any Audio frame arrived during the current run() (reset per run).
 	private sawAudio = false;
 	// One-shot latch so the "voice unavailable" signal fires at most once per synth.
 	private voiceUnavailableNotified = false;
-	// Monotonic run epoch. Each run() and stop() bumps it so a superseded run's
-	// still-decoding sentence can't leak audio into the shared worklet: the loop and
-	// the frame scheduler both check their captured gen against the current one.
+	// Monotonic session epoch. Each socket is stamped with the gen that was current
+	// when it opened; a new utterance (run) and stop() both bump it. handleMessage
+	// drops every message whose stamp != the current gen, so a stale session's late
+	// or buffered Audio/Ready can never reach the pacing queue or flip readiness —
+	// this is the load-bearing guard against overlapping sessions.
 	private gen = 0;
 
-	// Realtime pacing state (see PLAYBACK_LOOKAHEAD_MS). A sentence's PCM frames are
-	// queued here with a scheduled release time instead of posting to the worklet on
+	// Realtime pacing state (see PLAYBACK_LOOKAHEAD_MS). moshi's frames are queued
+	// here with a scheduled release time instead of posting to the worklet on
 	// arrival; a timer drains the queue to the worklet at ~1x realtime. The play
-	// clock spans the whole utterance (across the per-sentence fetches), so it is
+	// clock spans the whole utterance (across the per-sentence sessions), so it is
 	// reset only at the start of a run() and on stop().
 	private paceQueue: Array<{ releaseAt: number; frame: Float32Array }> = [];
 	private paceCumulativeSamples = 0;
 	private paceClockStart = 0;
 	private paceTimer: ReturnType<typeof setInterval> | undefined;
 
-	// The orchestrator passes its audio-output-processor worklet; PCM frames are paced
-	// into it (see scheduleFrame). No decoder to own.
+	// The orchestrator passes its audio-output-processor worklet; moshi's PCM frames
+	// are paced into it (see scheduleFrame). No decoder to own anymore.
 	constructor(
 		private outputWorklet: AudioWorkletNode,
 		private config: TtsConfig = {},
 	) {}
 
 	// Overload dispatch: a string is the one-shot path, an AsyncIterable is the
-	// streaming path.
+	// streaming path. Both end with an EOS and resolve when the server is done.
 	speak(input: AsyncIterable<string>): Promise<void>;
 	speak(input: string): Promise<void>;
 	speak(input: AsyncIterable<string> | string): Promise<void> {
 		return typeof input === "string" ? this.speakText(input) : this.speakStream(input);
 	}
 
-	// Streaming: token stream → chunker → per-sentence /audio/speech. Synthesis of the
-	// next sentence overlaps playback of the current one.
+	// Tier-1: token stream → chunker → TTS WS. Synthesis overlaps generation.
 	speakStream(textStream: AsyncIterable<string>): Promise<void> {
 		return this.run(chunkStream(textStream));
 	}
 
-	// One-shot: a whole string, chunked then spoken sentence by sentence.
+	// Tier-3 fallback: a whole string, chunked then sent + EOS in one go.
 	speakText(fullText: string): Promise<void> {
 		return this.run(asyncFrom(chunkText(fullText)));
 	}
 
-	// Barge-in: cut audio immediately. Clears the worklet's frame buffer and aborts every
-	// in-flight sentence fetch so no further frames arrive. Cheap to call when idle.
+	// Barge-in: cut audio immediately. Clears the worklet's frame buffer and
+	// closes the WS so no further frames arrive. Cheap to call when idle.
 	stop(): void {
 		this.aborted = true;
-		// Bump the epoch so any run still unwinding is now stale: a late fetch's frames
-		// are dropped by the gen guard instead of leaking into the worklet.
+		// Bump the epoch so any session still unwinding is now stale: its remaining
+		// frames are dropped by the gen guard instead of leaking into the worklet.
 		this.gen++;
 		this.resetPacing();
 		try {
@@ -274,96 +297,73 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		} catch (err) {
 			dbg(`[tts] stop: worklet reset ${String(err)}`);
 		}
-		for (const controller of this.inflight) {
-			try {
-				controller.abort();
-			} catch {
-				/* already settled */
-			}
-		}
-		this.inflight.clear();
-		dbg("[tts] stopped (audio cut, fetches aborted)");
+		// Release any pending waitForReady() sleep so run() can unwind.
+		this.flushReadyResolvers();
+		this.closeWs();
+		dbg("[tts] stopped (audio cut, WS closed)");
 	}
 
 	// Teardown for when the synthesizer is discarded for good (not part of the
-	// swappable interface). stop() already clears the pacing timer + aborts the fetch.
+	// swappable interface). stop() already clears the pacing timer + WS — there is
+	// no decoder worker to terminate.
 	dispose(): void {
 		this.stop();
 	}
 
-	// Speak the reply sentence by sentence. The first sentence is STREAMED (its PCM paced
-	// into the worklet as bytes arrive) for the lowest time-to-first-audio; the remaining
-	// sentences are PREFETCHED into buffers by a bounded concurrent pipeline and enqueued
-	// in order. That keeps sentence N+1's fetch running ahead of sentence N's 1x playout,
-	// so the pace queue never drains to empty between sentences and playback is gapless
-	// (the pace clock spans the whole utterance). Fetches run concurrently, but each
-	// sentence's PCM is enqueued strictly in order so the shared cumulative pace clock
-	// stays monotonic. Resolves once every sentence has been fetched (audio may still be
-	// draining).
+	// Open a fresh WS, wait for Ready, stream the chunks as {type:"Text"} frames,
+	// signal end-of-input with a null byte, then resolve once the server closes
+	// (all audio has been sent — playback may still be draining in the worklet).
 	private async run(chunks: AsyncIterable<string>): Promise<void> {
-		// A new utterance supersedes any in-flight one: bump the epoch so a prior run's
-		// late fetch is stale (its frames are dropped by the gen guard), and capture our
-		// gen so the loop notices a still-newer utterance superseding us mid-flight.
+		// A new utterance supersedes any in-flight one: bump the epoch so every prior
+		// session is now stale (its frames/Ready are dropped by the gen guard), and
+		// capture our gen so the loop below can notice if a still-newer utterance
+		// supersedes us mid-flight and stop opening sessions.
 		const myGen = ++this.gen;
+		this.closeWs();
 		this.aborted = false;
 		this.sawAudio = false;
 		this.resetPacing();
 
+		// moshi concatenates every Text message in a session into ONE generation, and
+		// garbles after just a few concatenated sentences — we can't stop it concatenating,
+		// so we never give it more than one sentence: each chunk gets its own session
+		// (connect → Text → Eos → close). Single sentences synthesize cleanly (the only thing
+		// that ever worked). moshi generates faster than realtime, so the paced frame queue
+		// (scheduleFrame) stays ahead of playback and a sentence keeps playing while the next
+		// session spins up — no audible gap. Generation is serialized per sentence; playback
+		// stays continuous.
 		let attempted = false;
 		try {
-			const it = chunks[Symbol.asyncIterator]();
-
-			// Pull the first non-empty sentence and stream it, for the lowest
-			// time-to-first-audio. (Streaming only the first sentence keeps a single
-			// writer on the cumulative pace clock while the rest are prefetched.)
-			let firstText: string | null = null;
-			for (;;) {
-				const { value, done } = await it.next();
-				if (done) break;
-				const t = (value as string).trim();
-				if (t) {
-					firstText = t;
-					break;
-				}
-			}
-			if (firstText === null) return; // nothing speakable
-			attempted = true;
-
-			// A bounded pipeline of in-flight buffered fetches for the remaining
-			// sentences, kept PREFETCH_SENTENCES deep so downloads run ahead of playout.
-			const pipeline: Array<Promise<Uint8Array | null>> = [];
-			let exhausted = false;
-			const pump = async (): Promise<void> => {
-				while (!exhausted && pipeline.length < PREFETCH_SENTENCES) {
-					if (this.aborted || myGen !== this.gen) return;
-					const { value, done } = await it.next();
-					if (done) {
-						exhausted = true;
-						return;
-					}
-					const t = (value as string).trim();
-					if (!t) continue;
-					pipeline.push(this.fetchSentence(t, myGen, false));
-				}
-			};
-
-			// Stream sentence 1 while the pipeline prefetches sentences 2..N concurrently.
-			await Promise.all([this.fetchSentence(firstText, myGen, true), pump()]);
-
-			// Drain the prefetched sentences in order: await each buffered PCM, refill the
-			// pipeline so the following fetch is already running, then enqueue (paced).
-			while (pipeline.length) {
+			for await (const chunk of chunks) {
+				// A newer utterance (or stop()) bumped the epoch — abandon this stale
+				// loop so it stops spinning up sessions for a superseded utterance.
 				if (this.aborted || myGen !== this.gen) break;
-				const pcm = await pipeline.shift()!;
-				await pump();
-				if (pcm && pcm.length) this.enqueuePcmBytes(pcm);
+				// openSession() returns null on abort/supersede OR a transient socket
+				// failure. Distinguish: a bumped epoch or a barge-in ends the loop; a
+				// transient failure only loses THIS sentence, so try one re-open, then
+				// skip to the next rather than abandoning the rest of the reply.
+				let session = await this.openSession();
+				if (!session) {
+					if (this.aborted || myGen !== this.gen) break;
+					session = await this.openSession();
+					if (!session) {
+						if (this.aborted || myGen !== this.gen) break;
+						dbgWarn("[tts] session open failed; skipping sentence");
+						continue;
+					}
+				}
+				if (this.aborted || myGen !== this.gen || session.ws.readyState !== WebSocket.OPEN) break;
+				session.ws.send(encode({ type: "Text", text: chunk }));
+				attempted = true;
+				dbg(`[tts] -> Text (${chunk.length} chars)`);
+				await this.endSession(session);
 			}
 		} catch (err) {
-			dbgError(`[tts] speak loop error: ${String(err)}`);
+			dbgError(`[tts] text stream error: ${String(err)}`);
 		}
 
-		// If we sent at least one sentence but not a single audio byte ever came back,
-		// the text rendered silently (backend unreachable/failing all turn) — surface a
+		// If we sent at least one sentence but not a single Audio frame ever came back,
+		// the text rendered silently (moshi unreachable/failing all turn) — surface a
 		// one-shot signal so the failure isn't invisible. Suppressed on abort/supersede.
 		if (
 			attempted &&
@@ -373,7 +373,7 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 			!this.voiceUnavailableNotified
 		) {
 			this.voiceUnavailableNotified = true;
-			dbgWarn("[tts] no audio this turn; TTS may be unavailable");
+			dbgWarn("[tts] no audio frames this turn; TTS may be unavailable");
 			try {
 				this.config.onVoiceUnavailable?.();
 			} catch (err) {
@@ -382,102 +382,147 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		}
 	}
 
-	// POST one sentence to /audio/speech and consume the returned raw PCM. In `stream`
-	// mode the PCM is paced into the worklet the moment bytes arrive (lowest
-	// time-to-first-audio — used for the first sentence) and the return is null. In
-	// buffered mode the whole clip is accumulated and returned as one Uint8Array, so a
-	// prefetched sentence can be enqueued in strict order later without a second writer
-	// racing the shared cumulative pace clock. A transient failure only loses THIS
-	// sentence (logged, skipped) rather than abandoning the rest of the reply; the gen
-	// check after each read drops audio from a superseded run.
-	private async fetchSentence(text: string, myGen: number, stream: boolean): Promise<Uint8Array | null> {
-		const base = this.config.baseUrl ?? DEFAULT_TTS_BASE;
-		const voice = this.config.voice ?? DEFAULT_VOICE;
-		const controller = new AbortController();
-		this.inflight.add(controller);
-		const timer = setTimeout(() => controller.abort(), SPEECH_FETCH_TIMEOUT_MS);
-		const buffered: Uint8Array[] = [];
-		try {
-			const res = await fetch(base, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ input: text, voice, response_format: "pcm" }),
-				signal: controller.signal,
-			});
-			if (!res.ok || !res.body) {
-				dbgWarn(`[tts] /audio/speech ${res.status}; skipping sentence`);
-				return null;
+	// Open a fresh TTS WS, wait for Ready, and return it with a promise that resolves
+	// when the server finishes (close / transport error). Null if aborted or the
+	// socket never came up.
+	private async openSession(): Promise<{ ws: WebSocket; done: Promise<void> } | null> {
+		const ws = this.openSocket();
+		this.ws = ws;
+		const done = new Promise<void>((resolve) => {
+			ws.addEventListener("close", () => resolve(), { once: true });
+			ws.addEventListener("error", () => resolve(), { once: true });
+		});
+		await this.waitForReady(ws);
+		if (this.aborted || ws.readyState !== WebSocket.OPEN) {
+			// Close the socket THIS session opened, not the shared this.ws slot — a newer
+			// session (bumped in during the await) may already own this.ws, and closeWs()
+			// would tear that live one down.
+			try {
+				ws.close();
+			} catch {
+				/* already closing */
 			}
-			// Read the PCM as it streams in. A 16-bit LE sample can straddle two network
-			// chunks, so carry a leftover odd byte between reads.
-			const reader = res.body.getReader();
-			let carry: Uint8Array | null = null;
-			let total = 0;
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				// Superseded (barge-in / newer utterance): stop reading, drop the rest.
-				if (this.aborted || myGen !== this.gen) {
-					await reader.cancel().catch(() => {});
-					return null;
-				}
-				if (!value || !value.length) continue;
-				let bytes: Uint8Array = value;
-				if (carry) {
-					const merged = new Uint8Array(carry.length + value.length);
-					merged.set(carry);
-					merged.set(value, carry.length);
-					bytes = merged;
-					carry = null;
-				}
-				const usable = bytes.length - (bytes.length % 2);
-				if (usable < bytes.length) carry = bytes.slice(usable);
-				if (usable > 0) {
-					if (stream) {
-						this.enqueuePcmBytes(bytes.subarray(0, usable));
-					} else {
-						// Copy: subarray is a view over the reader's chunk buffer, which may
-						// be reused on the next read; the buffered path retains it.
-						buffered.push(bytes.slice(0, usable));
-					}
-					total += usable;
-				}
-			}
-			dbg(`[tts] ${stream ? "streamed" : "fetched"} "${text.slice(0, 40)}" (${total} bytes)`);
-			if (stream || total === 0) return null;
-			const out = new Uint8Array(total);
-			let off = 0;
-			for (const b of buffered) {
-				out.set(b, off);
-				off += b.length;
-			}
-			return out;
-		} catch (err) {
-			// AbortError on barge-in is expected; anything else is a transient loss.
-			if (!this.aborted) dbgWarn(`[tts] sentence fetch failed: ${String(err)}`);
 			return null;
+		}
+		return { ws, done };
+	}
+
+	// Signal end-of-input ({type:"Eos"} — matches Unmute's proven TTSClientEosMessage),
+	// then wait for the server to finish generating + close so the next session doesn't
+	// interleave audio frames into the shared worklet.
+	private async endSession(session: { ws: WebSocket; done: Promise<void> }): Promise<void> {
+		if (!this.aborted && session.ws.readyState === WebSocket.OPEN) {
+			session.ws.send(encode({ type: "Eos" }));
+			dbg("[tts] -> Eos");
+		}
+		// `done` only settles on ws close/error. A moshi that emits PCM then never closes
+		// would hang here forever and wedge the rest of the turn — so race it against a
+		// timeout, and on the timeout branch close the socket so the loop advances.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				dbgWarn("[tts] session done timeout; closing socket");
+				try {
+					session.ws.close();
+				} catch {
+					/* already closing */
+				}
+				resolve();
+			}, SESSION_DONE_TIMEOUT_MS);
+		});
+		try {
+			await Promise.race([session.done, timeout]);
 		} finally {
-			clearTimeout(timer);
-			this.inflight.delete(controller);
+			if (timer) clearTimeout(timer);
 		}
 	}
 
-	// Convert an even-length run of raw 16-bit LE mono PCM bytes to Float32 and slice it
-	// into fixed-size frames, each queued for paced release. A DataView reads the
-	// samples little-endian without any buffer-alignment assumption (a streamed chunk's
-	// byteOffset is arbitrary). Little-endian is the wire format the upstream emits
-	// (audio/pcm;rate=24000;channels=1).
-	private enqueuePcmBytes(bytes: Uint8Array): void {
-		const n = bytes.length >> 1;
-		if (!n) return;
-		this.sawAudio = true;
-		const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
-		for (let s = 0; s < n; s += FRAME_SAMPLES) {
-			const count = Math.min(FRAME_SAMPLES, n - s);
-			const frame = new Float32Array(count);
-			for (let i = 0; i < count; i++) frame[i] = dv.getInt16((s + i) * 2, true) / 32768;
-			this.scheduleFrame(frame);
+	private openSocket(): WebSocket {
+		const base = this.config.baseUrl ?? DEFAULT_TTS_BASE;
+		const params = new URLSearchParams({
+			voice: this.config.voice ?? DEFAULT_VOICE,
+			format: "PcmMessagePack",
+			cfg_alpha: String(this.config.cfgAlpha ?? DEFAULT_CFG_ALPHA),
+			// See the auth caveat above — header isn't settable from a browser WS.
+			auth_id: this.config.apiKey ?? DEFAULT_API_KEY,
+		});
+		const url = `${base}?${params.toString()}`;
+
+		this.ready = false;
+		// Stamp the socket with the current epoch so handleMessage can tell, on every
+		// inbound frame, whether this session is still the live one.
+		const myGen = this.gen;
+		const ws = new WebSocket(url);
+		ws.binaryType = "arraybuffer";
+		ws.onmessage = (event: MessageEvent) => this.handleMessage(event, myGen);
+		ws.onerror = () => dbgWarn("[tts] websocket error");
+		dbg(`[tts] connecting → ${base}`);
+		return ws;
+	}
+
+	// Wait for the server's {type:"Ready"} before sending text. Each iteration
+	// sleeps READY_CHECK_MS but is woken early when Ready lands (or on abort /
+	// socket close). After MAX_READY_CHECKS we proceed regardless, with a warning.
+	private async waitForReady(ws: WebSocket): Promise<void> {
+		for (let i = 0; i < MAX_READY_CHECKS; i++) {
+			if (this.ready || this.aborted) return;
+			if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) return;
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, READY_CHECK_MS);
+				this.readyResolvers.push(() => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
 		}
+		if (!this.ready && !this.aborted) {
+			dbgWarn("[tts] server not Ready after readiness checks; sending text anyway");
+		}
+	}
+
+	private handleMessage(event: MessageEvent, gen: number): void {
+		// Epoch guard: drop everything from a session whose gen has been superseded by
+		// a new utterance or a stop(). A stale socket's onmessage stays bound until it
+		// finishes closing and can deliver late/buffered frames; ignoring them here
+		// means a stale Audio frame never reaches the pacing queue and a stale Ready
+		// never flips this.ready for the live run.
+		if (gen !== this.gen) return;
+		let msg: TtsServerMessage;
+		try {
+			msg = decode(new Uint8Array(event.data as ArrayBuffer)) as TtsServerMessage;
+		} catch (err) {
+			dbgWarn(`[tts] msgpack decode failed: ${String(err)}`);
+			return;
+		}
+		switch (msg.type) {
+			case "Ready":
+				this.ready = true;
+				this.flushReadyResolvers();
+				dbg("[tts] <- Ready");
+				return;
+			case "Audio": {
+				// Raw 24 kHz PCM frame (PcmMessagePack). No Opus decoder, no Ogg-stream
+				// state — so the per-sentence sessions can't corrupt a shared decoder.
+				// The frame is NOT posted to the worklet on arrival: moshi bursts faster
+				// than realtime, so we queue it for paced release (see scheduleFrame).
+				const pcm = (msg as { pcm?: number[] }).pcm;
+				if (!pcm || !pcm.length) return;
+				this.sawAudio = true;
+				this.scheduleFrame(Float32Array.from(pcm));
+				return;
+			}
+			case "Text":
+				// Optional {text,start_s,stop_s} word-timing frame — ignored for now.
+				return;
+			default:
+				return;
+		}
+	}
+
+	private flushReadyResolvers(): void {
+		const resolvers = this.readyResolvers;
+		this.readyResolvers = [];
+		for (const r of resolvers) r();
 	}
 
 	// Clear the pacing queue + timer and reset the play clock. Called at the start
@@ -528,6 +573,21 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		if (!this.paceQueue.length && this.paceTimer) {
 			clearInterval(this.paceTimer);
 			this.paceTimer = undefined;
+		}
+	}
+
+	private closeWs(): void {
+		const ws = this.ws;
+		if (!ws) return;
+		this.ws = undefined;
+		ws.onmessage = null;
+		ws.onerror = null;
+		if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+			try {
+				ws.close();
+			} catch {
+				/* already closing */
+			}
 		}
 	}
 }

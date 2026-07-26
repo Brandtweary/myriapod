@@ -7,12 +7,12 @@ exchange and grows a personal memory in your own browser — the matched terms s
 and the pipeline's own actions scroll in the right, so the memory layer is on screen rather than
 hidden behind the generation.
 
-The **browser orchestrates** the whole loop: batch speech-to-text → a frontier LLM → sentence-batched
-text-to-speech, all driven in-page. All three legs are reached through a small **metering proxy** (a $10
-free tier, family codes, or bring-your-own-key): the proxy holds the owner key server-side and forwards
-STT and TTS to OpenRouter's cloud audio endpoints under a server-forced model, exactly as it does for
-chat. The "run it yourself" story points self-hosters at OpenAI-compatible ASR/TTS of their own behind
-the same proxy routes.
+The **browser orchestrates** the whole loop: batch speech-to-text → a frontier LLM → streaming
+text-to-speech, all driven in-page. The LLM is reached through a small **metering proxy** (a $10
+free tier, family codes, or bring-your-own-key); the STT leg is a self-hosted
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) server (HTTP), and the TTS leg is a
+self-hosted open-weight [Kokoro](https://github.com/hexgrad/kokoro) model served over a
+msgpack WebSocket. The "run it yourself" story points people at those open components.
 
 Motto: **maximal reuse** — lean on the framework and existing components; writing logic from scratch
 (outside the new UI) is a red flag.
@@ -88,19 +88,13 @@ external services:
   - **family** — a redeemed credit code → a proxy-minted sub-key, spent through the proxy.
   - **own-key** — the visitor's own OpenRouter key, calling OpenRouter **directly** (bypasses the proxy).
   Reasoning is **always on** (Kimi K3 has no off mode) — see the reasoning note in `myriapod-model.ts`.
-- **STT (batch)** — the proxy's `POST /v1/audio/transcriptions` route. The whole utterance's PCM is
-  encoded as a 16-bit mono WAV and POSTed as `multipart/form-data` (`file` field); the proxy injects
-  the owner key + a forced Whisper model and forwards to OpenRouter's `/audio/transcriptions`, returning
-  `{text, usage}` JSON. Stateless. `src/stt.ts`. Configured via `VITE_STT_BASE` (the proxy origin).
-- **TTS (batch per sentence)** — the proxy's `POST /v1/audio/speech` route. The `SentenceChunker` splits
-  the reply and each sentence chunk is POSTed as `{input, voice?, response_format?}`; the proxy injects
-  the owner key + a forced speech model + default voice and streams OpenRouter's `/audio/speech` response
-  straight back. Default `response_format` is `pcm` (raw 16-bit LE mono 24 kHz); the frontend reads the
-  HTTP response incrementally and paces frames into the audio-output worklet as they arrive (no decode),
-  so first audio plays at the endpoint's time-to-first-byte rather than after the whole clip downloads.
-  The fetch of sentence N+1 overlaps playback of sentence N, so playback is gapless. A realtime-optimized
-  speech model with a pinned provider keeps the per-sentence round-trip low. `src/tts.ts`. Configured via
-  `VITE_TTS_BASE` (the proxy origin).
+- **STT (batch)** — a self-hosted Whisper HTTP endpoint. The whole utterance's PCM is resampled
+  24 kHz → 16 kHz, encoded as a 16-bit mono WAV, and POSTed as `multipart/form-data`; the server
+  returns `{"text":...}` JSON. Stateless. `src/stt.ts`. Configured via `VITE_STT_BASE`.
+- **TTS (streaming)** — a moshi-server WebSocket (`/api/tts_streaming`). Sentence chunks stream up as
+  the LLM generates; raw 24 kHz PCM frames (`PcmMessagePack`) stream back and are paced to ~1x realtime
+  before posting to the audio-output-processor worklet — no Opus decoder. `src/tts.ts`. Configured
+  via `VITE_TTS_BASE`.
 - **Embeddings** — the pipeline's mint-time dedup embeds each term (description) via the proxy's
   `/v1/embed`, a passthrough to a self-hosted embedding-inference container (HF text-embeddings-
   inference, MiniLM-class). The 384-dim vector is stored on the term and rides the lexicon export;
@@ -110,19 +104,16 @@ external services:
 **Per-turn voice loop:** mic toggle-off → PCM → **batch STT** → (lexicon auto-replace rules rewrite
 the transcript) → `agent.prompt(transcript)` (browser-local retrieval injects a `<memory>` block) →
 the LLM streams → the assistant's text deltas are tapped off the agent lifecycle, cut into sentences,
-and spoken via **batched TTS** (one HTTP fetch per sentence, fetches overlapping playback). Typed chat
-is the *same agent* without the audio legs (and skips the
+and spoken via **streaming TTS**. Typed chat is the *same agent* without the audio legs (and skips the
 STT functions). The mic toggle owns the turn boundary; there is no server VAD. On `agent_end`, the
 pipeline tick fires.
 
 **The metering proxy (`proxy/`) is the only backend** — Bun + Hono + `bun:sqlite`. It holds the
 OpenRouter owner key server-side, mints/recovers anon and family principals, meters real per-call
-cost against them, enforces caps, and hosts the open (rate-limited) passthroughs: `/v1/web-search`,
-`/v1/embed`, and the two audio routes `/v1/audio/transcriptions` + `/v1/audio/speech` (both owner-key
-injected with a server-forced model, so the key can never fund an arbitrary audio model). It's a cheap
-always-on spine; the audio routes reach OpenRouter's shared cloud endpoints, while embed rides a
-swappable self-hosted seam (dedup degrades to string-only if it's down). Run it with `bun run server.ts`
-on `127.0.0.1:8790`.
+cost against them, enforces caps, and hosts the open (rate-limited) `/v1/web-search` and `/v1/embed`
+passthroughs. It's a cheap always-on spine, deliberately separate from the GPU-hosted STT/TTS/embed
+(so the site survives the GPU lease lapsing — TTS/STT sit behind swappable seams; dedup degrades to
+string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
 
 - **Frontend** — a TypeScript app over the `pi-web-ui` UI layer, whose source is **vendored** in
   `src/pi-web-ui/` (Lit 3 + mini-lit + Tailwind v4, Vite, static SPA). Retrieval, the term memory, and
@@ -158,12 +149,9 @@ on `127.0.0.1:8790`.
     rename/merge/remove terms, aliases, no-stem, `similar_terms` (dedup candidates), STT logging +
     auto-replace, and `flag_for_review`. Every tool records a one-line action (that stream *is* the
     action buffer and the activity feed).
-  - **stt.ts** — batch speech-to-text (`PcmRecorder` + stateless `WhisperClient` POSTing the WAV to
-    the proxy's `/v1/audio/transcriptions`).
-  - **tts.ts** — sentence-batched text-to-speech (`SentenceChunker` + `CloudTtsSynthesizer`: one HTTP
-    POST per sentence to the proxy's `/v1/audio/speech`, fetch of the next sentence overlapping playback
-    of the current one, a ~1x-realtime pacing queue so the worklet buffer doesn't overflow, and barge-in
-    via an `AbortController` on the in-flight fetch plus a generation epoch).
+  - **stt.ts** — batch speech-to-text (`PcmRecorder` + stateless `WhisperClient`).
+  - **tts.ts** — streaming text-to-speech (`SentenceChunker` + `KyutaiTtsSynthesizer` over a moshi
+    msgpack WS; ~1x-realtime pacing so the worklet buffer doesn't overflow).
   - **stt-lexicon.ts** — the speech-adaptation half of the lexicon: the mistranscription log + the
     auto-replace rules (`applyAutoReplace`, applied client-side to voice transcripts before display),
     and `mistranscriptionCount` (the recurrence signal for the persistent-miss → alias escalation).
@@ -233,32 +221,26 @@ on `127.0.0.1:8790`.
     - **stem.ts** — Porter stemmer (opt-in) + always-on `depluralize()`.
     - **config.ts** · **types.ts** · **stopwords.ts** — tunables, shapes, NLTK stopword list.
 - **proxy/** — the metering backend (Bun, never bundled). `server.ts` (Hono app: `/anon-init`,
-  `/v1/chat/completions`, `/v1/web-search`, `/v1/embed`, `/v1/audio/transcriptions`, `/v1/audio/speech`,
-  `/redeem`, `/balance`, `/health`, `/voice/*`,
+  `/v1/chat/completions`, `/v1/web-search`, `/v1/embed`, `/redeem`, `/balance`, `/health`, `/voice/*`,
   `/subscribe`), `db.ts` (`bun:sqlite`: principals / usage_log / family_codes / anon_ips / subscribers),
   `openrouter.ts` (forward +
   meter; mint sub-keys), `anon.ts` (the grant gates), `voice-broker.ts` (the voice-session broker),
-  `config.ts` (adds `STT_MODEL` / `TTS_MODEL` / `TTS_VOICE` — the server-forced audio model + default
-  voice — and `TTS_PROVIDER`, which pins the speech model's serving provider so OpenRouter can't route
-  to a slow one), `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
-  `proxy/.env` (gitignored); `.env.example` documents the shape. The two audio routes are per-IP
-  rate-limited, owner-key injected, and model-forced server-side, mirroring the `/v1/embed` and
-  `/v1/web-search` passthroughs.
-  - **voice-broker.ts** — vestigial. It load-balanced browser voice sessions across self-hosted TTS
-    instances with overflow queuing (in-memory ephemeral leases, capacity per instance, TTL sweeper,
-    routes `POST /voice/lease` / `/voice/heartbeat` / `/voice/release`, gated on `VITE_VOICE_BROKER`).
-    The cloud audio endpoints are shared and stateless, so there is nothing to lease; the broker is off
-    by default and no part of the live audio path.
+  `config.ts`, `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
+  `proxy/.env` (gitignored); `.env.example` documents the shape.
+  - **voice-broker.ts** — load-balances browser voice sessions across the moshi instance(s) with
+    overflow queuing. In-memory ephemeral leases; capacity per instance = the moshi TTS `batch_size`
+    (STT is a shared Whisper endpoint, so the leased per-instance `sttUrl` is vestigial). Routes:
+    `POST /voice/lease` (else `202 {queued}`), `/voice/heartbeat`, `/voice/release`. TTL sweeper
+    reclaims dead leases. Gated on `VITE_VOICE_BROKER` (default off = single-instance demo).
 - **scripts/** — dev-time tooling (TS, never shipped): **test-graph-mutation.ts** (term-store API) and
   **test-ingest.ts** (pipeline machinery + similarity + STT lexicon).
 - **public/** — static assets: the audio-output worklet + the mic-capture worklet (ported from
   Unmute's frontend so the wire format matches). Neither audio leg uses Opus.
 - **vite.config.ts** — Tailwind, a dev `/__log` middleware, and a **build-only** CSP injector
-  (`connect-src` = self + the proxy origin + OpenRouter direct for the own-key path). STT, TTS,
-  `/v1/embed`, and `/v1/web-search` all ride the proxy origin — same-origin https in prod, already
-  covered.
-- **.env.local** — dev frontend config (NO keys): `VITE_PROXY_BASE`, the STT/TTS proxy-origin
-  overrides, and the optional `VITE_VOICE_BROKER` flag.
+  (`connect-src` = self + OpenRouter + the proxy origin + the STT/TTS WS origins). `/v1/embed` and
+  `/v1/web-search` ride the proxy origin, already covered.
+- **.env.local** — dev frontend config (NO keys): `VITE_PROXY_BASE`, the optional voice WS overrides,
+  and the optional `VITE_VOICE_BROKER` flag.
 - **index.html** · **tsconfig.json** · **package.json** — SPA scaffold, TS config, pinned deps.
 
 ## How it works (the non-obvious parts)
@@ -336,12 +318,11 @@ vendored components, and are load-bearing, not cruft:
 - **Commands:** `npm run dev` (Vite + HMR), `npm run build` (prod build + strict CSP), `npm run check`
   (`tsc --noEmit`). Dev tests: `npx tsx scripts/test-graph-mutation.ts` and `npx tsx scripts/test-ingest.ts`
   after any `src/kg/` change. Proxy: `cd proxy && bun run server.ts` (serve) / `bun test` (its suite).
-- **Endpoints are env-configured.** `VITE_PROXY_BASE`, and `VITE_STT_BASE` / `VITE_TTS_BASE` (the proxy's
-  `/v1/audio/transcriptions` and `/v1/audio/speech` routes — http(s), not ws://), default to local/dev
-  targets and are overridden at build time for deploy; in prod all three are the same proxy origin. On
-  the proxy, `STT_MODEL` / `TTS_MODEL` / `TTS_VOICE` force the server-side audio model + default voice,
-  and `SEARXNG_BASE` / `EMBED_BASE` point at the self-hosted search/embed backends. The own-key path
-  always goes to OpenRouter direct.
+- **Endpoints are env-configured.** `VITE_PROXY_BASE` and `VITE_STT_BASE` / `VITE_TTS_BASE` default to
+  local/dev targets and are overridden at build time for deploy. Optional voice overrides (for
+  self-hosters pointing at their own moshi/Whisper): `VITE_TTS_VOICE` / `VITE_TTS_AUTH` /
+  `VITE_TTS_CFG_ALPHA` / `VITE_STT_AUTH`, all with sane fallbacks. On the proxy, `SEARXNG_BASE` and
+  `EMBED_BASE` point at the self-hosted backends. The own-key path always goes to OpenRouter direct.
 - **Versions are pinned** — the runtime `@earendil-works/*` suite (pi-agent-core, pi-ai, pi-tui) is
   locked at 0.80.10 (an `overrides` block forces it), the release line with native Kimi K3 support
   (empty-signature thinking-block replay for multi-turn/tool loops, the `"max"` thinking level,

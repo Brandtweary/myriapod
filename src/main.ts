@@ -64,7 +64,7 @@ import { PIPELINE_STORE, PipelineRuntime, type RunningContextEntry } from "./pip
 import { applyAutoReplace, emptySttLexicon, type SttLexicon } from "./stt-lexicon.js";
 import { installVoiceCapture } from "./voice.js";
 import { PcmRecorder, WhisperClient } from "./stt.js";
-import { CloudTtsSynthesizer, TTS_SAMPLE_RATE } from "./tts.js";
+import { KyutaiTtsSynthesizer, TTS_SAMPLE_RATE } from "./tts.js";
 import { type ConsentChoice, showConsentModal } from "./consent-modal.js";
 import { installMemoryButton } from "./memory-button.js";
 import { installStopAudioButton } from "./stop-audio-button.js";
@@ -156,12 +156,12 @@ const WEB_SEARCH_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/web-search`;
 // visitors send no bearer.
 const EMBED_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/embed`;
 
-// Voice-concurrency broker (OFF by default — and now vestigial). It was built to
-// load-balance browser sessions across self-hosted moshi TTS instances; the cloud
-// audio endpoints are shared + stateless, so there is nothing to lease. With
-// VITE_VOICE_BROKER unset, no lease calls fire and the STT client + CloudTtsSynthesizer
-// use VITE_STT_BASE / VITE_TTS_BASE directly. The lease machinery below is dead while
-// the flag is off.
+// Voice-concurrency broker (OFF by default). When VITE_VOICE_BROKER is unset the
+// voice path is byte-for-byte the current single-instance demo: no lease calls, and
+// SttClient/KyutaiTtsSynthesizer are built with no URL override (they fall back to
+// VITE_STT_BASE / VITE_TTS_BASE). Enabled, the broker hands each voice-engaged
+// browser a leased {sttUrl, ttsUrl} pair and queues overflow. The /voice/* routes
+// live at the proxy ORIGIN (same as web-search), so the build-time CSP is untouched.
 const VOICE_BROKER_ENABLED =
 	import.meta.env.VITE_VOICE_BROKER === "1" || import.meta.env.VITE_VOICE_BROKER === "true";
 const VOICE_LEASE_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/voice/lease`;
@@ -422,7 +422,7 @@ let lastVacuum: { terms: TermMatch[] } | null = null;
 // streamed text is tapped off the lifecycle listener and spoken via TTS. The
 // synth is created lazily on the first voice turn and reused; the STT client is
 // reused across turns (reconnected if the socket dropped).
-let synth: CloudTtsSynthesizer | null = null;
+let synth: KyutaiTtsSynthesizer | null = null;
 let sttClient: WhisperClient | null = null;
 // Voice-turn identity + in-flight tracking (barge-in coherence). Turn-scoped speak
 // state (voiceTurnSpeaking / voiceQueue / voiceTurnCut) lives in module globals with no
@@ -519,7 +519,7 @@ async function getAudioWorkletNode(audioContext: AudioContext, name: string): Pr
 // this is the SHARED system prompt for both
 // voice and typed chat (single agent), so its "talk out loud, no markdown" guidance
 // also reaches the typed path.
-// The prompt deliberately names the model stack (LLM / STT / Orpheus TTS) so the
+// The prompt deliberately names the model stack (LLM / STT / Kokoro TTS) so the
 // agent knows what it is rather than hallucinating its own voice — update the stack
 // lines here on any model or voice swap.
 const VOICE_SYSTEM_PROMPT = `You are the voice of Myriapod.
@@ -540,7 +540,7 @@ The person is speaking to you through speech-to-text, so expect mistranscription
 What you are (only worth mentioning if it comes up):
 - If someone asks your name, it's Myriapod.
 - Your mind is Kimi K3, a frontier language model.
-- You hear through speech-to-text, and you speak through Orpheus, an open-weights text-to-speech model.
+- You hear through speech-to-text, and you speak through Kokoro, an open-weights text-to-speech model.
 - You're the voice of Myriapod. Your own documentation follows below: it explains what you are and how you work, and it's also the public README, so lean on it for any question about your architecture, your memory, or how someone could run Myriapod themselves. The source and its GitHub link are reachable from the About page.`;
 
 // The public README, imported raw and appended to the system prompt so the agent
@@ -1615,9 +1615,9 @@ async function initApp() {
 	let startCancelled = false;
 
 	// Lazily build the shared TTS synth: an AudioContext + the audio-output-processor
-	// worklet, reused for every voice turn. The context runs at the 24 kHz PCM rate the
-	// /audio/speech endpoint returns so frames play with no resampling.
-	const ensureSynth = async (): Promise<CloudTtsSynthesizer> => {
+	// worklet, reused for every voice turn. The context runs at moshi's 24 kHz PCM rate
+	// so frames play with no resampling (the Opus decoder that used to resample is gone).
+	const ensureSynth = async (): Promise<KyutaiTtsSynthesizer> => {
 		if (synth) return synth;
 		const ctx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE });
 		const outputWorklet = await getAudioWorkletNode(ctx, "audio-output-processor");
@@ -1627,9 +1627,11 @@ async function initApp() {
 		// toast instead of failing silently to text-only.
 		const onVoiceUnavailable = () =>
 			showVoiceToast("Voice output is unavailable right now — the reply is text-only.");
-		// Cloud TTS is a shared stateless endpoint (like STT), not a per-instance leased
-		// socket, so the broker lease is ignored here — the synth always uses VITE_TTS_BASE.
-		synth = new CloudTtsSynthesizer(outputWorklet, { onVoiceUnavailable });
+		// voiceLease is null on the default (broker-off) path → the synth falls back to
+		// VITE_TTS_BASE, exactly as before.
+		synth = voiceLease
+			? new KyutaiTtsSynthesizer(outputWorklet, { baseUrl: voiceLease.ttsUrl, onVoiceUnavailable })
+			: new KyutaiTtsSynthesizer(outputWorklet, { onVoiceUnavailable });
 		return synth;
 	};
 

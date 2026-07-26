@@ -39,16 +39,16 @@ function debugLogPlugin(): Plugin {
 // Strict Content-Security-Policy, injected ONLY into the production build (dev would
 // break: Vite's HMR client needs inline scripts). `script-src 'self'` (no inline) shuts
 // the XSS key-exfiltration vector (the own-key storage posture). `connect-src` is scoped
-// to the egress targets of the browser-orchestrated stack:
-//   - the metering proxy (chat + ingestion + the STT/TTS audio routes on the
-//     owner-funded paths), VITE_PROXY_BASE / VITE_STT_BASE / VITE_TTS_BASE — all the
-//     same proxy origin in prod, so they collapse to one entry
+// to the four egress targets of the browser-orchestrated stack:
+//   - the metering proxy (chat + ingestion on the owner-funded paths), VITE_PROXY_BASE
 //   - OpenRouter directly (the own-key path), https://openrouter.ai
+//   - the moshi STT + TTS WebSockets (the voice cascade's back half), VITE_STT_BASE /
+//     VITE_TTS_BASE (ws:// in dev via the tunnel, wss:// on the public host in prod)
 function cspPlugin(): Plugin {
 	const originOf = (u: string) => new URL(u).origin;
 	const proxyOrigin = originOf(process.env.VITE_PROXY_BASE ?? "http://127.0.0.1:8790/v1");
-	const sttOrigin = originOf(process.env.VITE_STT_BASE ?? "http://127.0.0.1:8790/v1/audio/transcriptions");
-	const ttsOrigin = originOf(process.env.VITE_TTS_BASE ?? "http://127.0.0.1:8790/v1/audio/speech");
+	const sttOrigin = originOf(process.env.VITE_STT_BASE ?? "http://localhost:8123/api/asr-http");
+	const ttsOrigin = originOf(process.env.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming");
 	const connect = [...new Set(["'self'", "https://openrouter.ai", proxyOrigin, sttOrigin, ttsOrigin])].join(" ");
 	const csp = [
 		"default-src 'self'",

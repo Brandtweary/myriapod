@@ -12,14 +12,13 @@ fails soft.
 | Capability | How | Needed? |
 |---|---|---|
 | **LLM** | Bring-your-own OpenRouter key (browser → OpenRouter direct, **zero backend**), or run the metering proxy | One or the other |
-| **Voice** | Cloud STT/TTS through the metering proxy's audio routes, or self-host your own OpenAI-compatible ASR/TTS behind them, or go **text-only** | Optional |
+| **Voice** | Your own Whisper (HTTP) + moshi (WebSocket), or go **text-only** | Optional |
 | **Embeddings** | An embedding-inference container behind the proxy | Optional (dedup degrades to string similarity) |
 | **Web search** | A SearXNG instance behind the proxy | Optional |
 
 The minimal path: build the SPA, serve it over HTTPS, and let visitors paste their own OpenRouter
-key. No server-side code at all. Add the proxy when you want to fund visitors (it also carries voice —
-the speech legs forward to a cloud audio provider through it); add embeddings and search to round out
-memory and tools.
+key. No server-side code at all. Add the proxy when you want to fund visitors; add the voice servers
+when you want speech; add embeddings and search to round out memory and tools.
 
 The backends are provided as a sanitized [`docker-compose.yml`](./templates/docker-compose.yml)
 template and a one-box [`Caddyfile.example`](./templates/Caddyfile.example) reverse proxy.
@@ -39,12 +38,17 @@ exactly those origins.
 
 | Var | Purpose | Example / default | Required? |
 |---|---|---|---|
-| `VITE_PROXY_BASE` | Metering-proxy origin (chat on owner-funded paths, plus web search + embed + audio). | `http://127.0.0.1:8790/v1` | Yes, unless pure own-key with no web search, embeddings, or voice |
-| `VITE_STT_BASE` | Batch speech-to-text — the proxy's `/v1/audio/transcriptions` route. | `https://your-domain.example/v1/audio/transcriptions` | Only for voice input |
-| `VITE_TTS_BASE` | Sentence-batched speech-out — the proxy's `/v1/audio/speech` route. | `https://your-domain.example/v1/audio/speech` | Only for voice output |
-| `VITE_VOICE_BROKER` | Vestigial voice-session broker. | `0` | No — **keep `0`** (nothing to lease with shared cloud audio) |
+| `VITE_PROXY_BASE` | Metering-proxy origin (chat on owner-funded paths, plus web search + embed). | `http://127.0.0.1:8790/v1` | Yes, unless pure own-key with no web search or embeddings |
+| `VITE_STT_BASE` | Whisper HTTP endpoint (batch speech-to-text). | `https://your-domain.example/api/asr-http` | Only for voice input |
+| `VITE_TTS_BASE` | moshi TTS WebSocket (streaming speech-out). | `wss://your-domain.example/api/tts_streaming` | Only for voice output |
+| `VITE_TTS_VOICE` | moshi voice id / server-side path. | stock male voice | No |
+| `VITE_TTS_AUTH` | moshi `auth_id`; must match the server's `authorized_ids`. | demo token | No |
+| `VITE_TTS_CFG_ALPHA` | Classifier-free-guidance strength. | `1.5` | No |
+| `VITE_STT_AUTH` | Bearer token if your Whisper endpoint is auth-gated. | none | No |
+| `VITE_VOICE_BROKER` | Enable the proxy's `/voice/*` lease broker. | `0` | No — **keep `0`** unless running multiple moshi instances |
 
-Leave the voice vars unset for a **text-only** deployment — typed chat works fully without them.
+Leave the voice vars unset (and don't run the voice servers) for a **text-only** deployment — typed
+chat works fully without them.
 
 ## LLM: own key vs own proxy
 
@@ -81,20 +85,15 @@ Bun + Hono + SQLite; the only server-side piece Myriapod ships. Copy `proxy/.env
 | `OPENROUTER_BASE` | OpenRouter API base. | `https://openrouter.ai/api/v1` | No |
 | `SEARXNG_BASE` | Self-hosted SearXNG backing `/v1/web-search`. | `http://127.0.0.1:8888` | No |
 | `EMBED_BASE` | Self-hosted embedding-inference backing `/v1/embed`. | `http://127.0.0.1:8082` | No |
-| `STT_MODEL` | Server-forced transcription model for `/v1/audio/transcriptions`. | a Whisper model id | No |
-| `TTS_MODEL` | Server-forced speech model for `/v1/audio/speech`. | an open-weight speech model id | No |
-| `TTS_VOICE` | Default voice for `TTS_MODEL` (the browser may request another voice the model exposes). | model-dependent | No |
 | `ALLOWED_ORIGIN` | CORS allow-list; comma-separated for several. | `http://localhost:5173` | **Yes** — see gotcha |
 | `TRUSTED_PROXY` | Peer IPs whose `X-Forwarded-For` is trusted. | empty | See gotcha |
 | `DB_PATH` | SQLite file path. | `./myriapod-proxy.db` | No |
 | `HOST` | Bind host. | `0.0.0.0` | No |
 | `PORT` | Bind port. | `8790` | No |
 
-The proxy also carries the two audio routes `/v1/audio/transcriptions` and `/v1/audio/speech`: per-IP
-rate-limited passthroughs that inject the owner key and forward to a cloud audio provider under the
-server-forced `STT_MODEL` / `TTS_MODEL` (so the key can never fund an arbitrary audio model). The old
-`/voice/*` lease broker and its `VOICE_*` vars are vestigial — the cloud audio endpoints are shared and
-stateless, so there is nothing to lease; leave `VITE_VOICE_BROKER=0`.
+Multi-instance voice adds `VOICE_INSTANCES` / `VOICE_STT_BASE` / `VOICE_TTS_BASE` /
+`VOICE_INSTANCE_CAPACITY` / `VOICE_HEARTBEAT_SEC` / `VOICE_MAX_LEASE_SEC` — ignore these unless you set
+`VITE_VOICE_BROKER=1` and run more than one moshi instance.
 
 > **Gotcha — `TRUSTED_PROXY`.** Behind a reverse proxy, if this is unset, **every visitor's IP
 > collapses to the reverse proxy's IP** — so all visitors share one rate-limit and free-grant bucket,
@@ -113,30 +112,36 @@ stateless, so there is nothing to lease; leave `VITE_VOICE_BROKER=0`.
 Run the proxy under a supervisor in production (a bare `bun run server.ts` has no auto-restart) — a
 [`myriapod-proxy.service`](./templates/myriapod-proxy.service) systemd unit template is in `templates/`.
 
-## Voice (STT + TTS)
+## Voice servers
 
-Both speech legs ride the metering proxy's audio routes — there are **no dedicated voice servers** in
-the default deploy. The proxy holds the owner key and forwards each call to a cloud audio provider
-under a server-forced model (`STT_MODEL` / `TTS_MODEL`). Point `VITE_STT_BASE` / `VITE_TTS_BASE` at the
-proxy's `/v1/audio/transcriptions` / `/v1/audio/speech` and voice works with nothing else to run. For a
-text-only site, leave both vars unset.
+Two speech backends stand behind the voice loop. Both are in the compose template; stand up whichever
+legs you want (input, output, or both). For a text-only site, run neither.
 
-**STT — batch transcription.** The browser encodes the whole utterance as a 16-bit mono WAV and POSTs
-it as `multipart/form-data` (the `file` field) to `/v1/audio/transcriptions`. The proxy injects the key
-+ `STT_MODEL` and forwards to the provider's OpenAI-compatible `/audio/transcriptions`, returning
-`{text, usage}` JSON. Stateless — one request per utterance.
+**STT — Whisper over HTTP.** A faster-whisper server exposing the OpenAI-compatible
+`POST /v1/audio/transcriptions` endpoint (multipart file upload, `response_format=json` →
+`{"text": ...}`). The browser resamples the whole utterance to 16 kHz mono WAV and POSTs it; the
+server returns the transcript. Any Whisper server speaking that OpenAI API shape works.
 
-**TTS — sentence-batched speech.** The frontend splits the reply into sentences and POSTs each to
-`/v1/audio/speech` as `{input, voice?, response_format?}`. The proxy injects the key + `TTS_MODEL` +
-default `TTS_VOICE` and forwards to the provider's `/audio/speech`, streaming back raw audio. The
-default `response_format` is `pcm` (raw 16-bit LE mono 24 kHz), played by the audio worklet with no
-decode. Sentence N+1 is fetched while sentence N plays, so latency approximates streaming and playback
-is gapless.
+`VITE_STT_BASE` points at `/api/asr-http` on your site origin; the `Caddyfile.example` rewrites that
+path to the server's real `/v1/audio/transcriptions` before proxying (keeping STT off the `/v1/*`
+namespace the metering proxy owns). If you expose Whisper on its own origin instead, point
+`VITE_STT_BASE` straight at `…/v1/audio/transcriptions`.
 
-**Self-host instead of cloud (optional).** Both routes speak a plain OpenAI-compatible API, so you can
-run your own ASR/TTS and point the proxy (or dedicated reverse-proxy routes) at them. The compose
-template ships a commented faster-whisper block as a starting point; any server speaking the
-`/audio/transcriptions` and `/audio/speech` shapes slots in the same way.
+**TTS — Kyutai moshi over WebSocket.** The browser speaks moshi's `PcmMessagePack` protocol over the
+`/api/tts_streaming` WebSocket: raw 24 kHz mono PCM frames over msgpack, a `{type:"Ready"}` handshake,
+`{type:"Text"}` / `{type:"Eos"}` sent up, `{type:"Audio", pcm:[...]}` received. Auth is the `auth_id`
+query param, which must match moshi's `tts.toml` `authorized_ids`. Set the voice and auth from the
+frontend via `VITE_TTS_VOICE` / `VITE_TTS_AUTH`.
+
+**moshi-server is built from source** — it is *not* a docker-pull-able published image. Clone and
+build it from Kyutai's open repos:
+
+- [github.com/kyutai-labs/unmute](https://github.com/kyutai-labs/unmute) (vendors moshi-server)
+- [github.com/kyutai-labs/moshi](https://github.com/kyutai-labs/moshi)
+
+Follow the unmute build, then run `worker --config configs/tts.toml`. The compose template documents
+this as a commented block rather than a fake image — see the `moshi` service in
+[`docker-compose.yml`](./templates/docker-compose.yml).
 
 ## Embeddings (optional)
 
@@ -156,12 +161,14 @@ compose template for the minimal `settings.yml`.
 The metering proxy is **API-only** — it serves no static files. You need:
 
 1. **A static host for the SPA.** `npm run build` emits `dist/`; serve those files.
-2. **TLS.** The mic (`getUserMedia`) requires a secure context, so HTTPS is mandatory, not optional.
+2. **TLS.** The mic (`getUserMedia`) and the TTS `wss://` both require a secure context, so HTTPS is
+   mandatory, not optional.
 
 The one-box [`Caddyfile.example`](./templates/Caddyfile.example) does all of it: serves the built SPA
-with an SPA fallback, reverse-proxies the API routes (including the `/v1/audio/*` speech routes) to the
-metering proxy, and auto-provisions a Let's Encrypt certificate from a real domain. Because Caddy
-forwards `X-Forwarded-For` automatically, this layout wants `TRUSTED_PROXY=127.0.0.1` on the proxy.
+with an SPA fallback, reverse-proxies the API routes to the metering proxy, proxies the voice routes
+to your whisper/moshi ingress, and auto-provisions a Let's Encrypt certificate from a real domain.
+Because Caddy forwards `X-Forwarded-For` automatically, this layout wants `TRUSTED_PROXY=127.0.0.1` on
+the proxy.
 
 > **Firewall — allow inbound 80 and 443.** A default-deny firewall (ufw, a cloud security group, a
 > VPS provider default) that permits only SSH makes the site unreachable with a *timeout* (not a

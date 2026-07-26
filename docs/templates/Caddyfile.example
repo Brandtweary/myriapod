@@ -1,14 +1,12 @@
 # Myriapod one-box reverse proxy — sanitized Caddyfile.
 #
-# Serves the built SPA, proxies the metering-proxy API, and auto-provisions
-# HTTPS from Let's Encrypt. TLS is not optional: the mic (getUserMedia) requires
-# a secure context. Speech-to-text and text-to-speech ride the metering proxy's
-# /v1/audio/* routes (owner-key injected, forwarded to a cloud audio provider),
-# so they need no dedicated upstream — the /v1/* block below already covers them.
+# Serves the built SPA, proxies the metering-proxy API and the voice backends,
+# and auto-provisions HTTPS from Let's Encrypt. TLS is not optional: the mic
+# (getUserMedia) and the TTS wss:// both require a secure context.
 #
 # Replace your-domain.example with a real domain you control — Caddy will fetch
-# and renew its certificate automatically. Point the upstream address at
-# wherever your metering proxy actually listens.
+# and renew its certificate automatically. Point the upstream addresses at
+# wherever your metering proxy and voice backends actually listen.
 
 your-domain.example {
 	# --- The metering proxy (API only) ---------------------------------------
@@ -37,19 +35,21 @@ your-domain.example {
 		reverse_proxy 127.0.0.1:8790
 	}
 
-	# --- Speech (STT + TTS) --------------------------------------------------
-	# No dedicated blocks: VITE_STT_BASE / VITE_TTS_BASE point at this origin's
-	# /v1/audio/transcriptions and /v1/audio/speech, which the /v1/* handle above
-	# already forwards to the metering proxy. The proxy injects the owner key and
-	# forwards to a cloud audio provider.
-	#
-	# OPTIONAL — self-host speech instead: run your own OpenAI-compatible ASR/TTS
-	# (see docker-compose.yml) and point VITE_STT_BASE / VITE_TTS_BASE at dedicated
-	# routes here that proxy to those containers, e.g.:
-	#   handle /api/asr-http {
-	#       rewrite * /v1/audio/transcriptions
-	#       reverse_proxy 127.0.0.1:8000
-	#   }
+	# --- Speech-to-text (Whisper, HTTP) --------------------------------------
+	# VITE_STT_BASE points at /api/asr-http on this origin. A bare faster-whisper
+	# serves the OpenAI path /v1/audio/transcriptions, so rewrite to it before
+	# proxying. Upstream = your whisper container (8000 in the compose template).
+	handle /api/asr-http {
+		rewrite * /v1/audio/transcriptions
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# --- Text-to-speech (moshi, WebSocket) -----------------------------------
+	# moshi serves /api/tts_streaming natively — no rewrite. Caddy upgrades the
+	# WebSocket automatically. Upstream = your moshi container (8080).
+	handle /api/tts_streaming {
+		reverse_proxy 127.0.0.1:8080
+	}
 
 	# --- The built SPA (catch-all) -------------------------------------------
 	# `npm run build` emits dist/. Everything not matched above serves the SPA,
