@@ -202,9 +202,18 @@ const SPEECH_FETCH_TIMEOUT_MS = 60_000;
 const PLAYBACK_LOOKAHEAD_MS = 300;
 const DRAIN_INTERVAL_MS = 15;
 
+// How many upcoming sentences to fetch concurrently, ahead of playout. A per-sentence
+// /audio/speech fetch (synthesis + download) is comparable to — often longer than — a
+// short sentence's spoken duration, so fetching strictly one sentence at a time lets the
+// pace queue drain to empty between short sentences: an audible beat at each boundary.
+// Prefetching several sentences keeps the fetch pipeline running ahead of 1x playout so
+// the pace queue stays fed and playback is continuous across sentence boundaries.
+const PREFETCH_SENTENCES = 3;
+
 export class CloudTtsSynthesizer implements SpeechSynthesizer {
-	// AbortController for the in-flight sentence fetch, so stop() cancels it promptly.
-	private inflight?: AbortController;
+	// AbortControllers for the in-flight sentence fetches (several run concurrently via
+	// the prefetch pipeline), so stop() can cancel every one of them promptly.
+	private inflight = new Set<AbortController>();
 	// Set by stop(); checked throughout run() so a barge-in unwinds promptly.
 	private aborted = false;
 	// Whether any audio arrived during the current run() (reset per run).
@@ -252,7 +261,7 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		return this.run(asyncFrom(chunkText(fullText)));
 	}
 
-	// Barge-in: cut audio immediately. Clears the worklet's frame buffer and aborts the
+	// Barge-in: cut audio immediately. Clears the worklet's frame buffer and aborts every
 	// in-flight sentence fetch so no further frames arrive. Cheap to call when idle.
 	stop(): void {
 		this.aborted = true;
@@ -265,13 +274,15 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		} catch (err) {
 			dbg(`[tts] stop: worklet reset ${String(err)}`);
 		}
-		try {
-			this.inflight?.abort();
-		} catch {
-			/* already settled */
+		for (const controller of this.inflight) {
+			try {
+				controller.abort();
+			} catch {
+				/* already settled */
+			}
 		}
-		this.inflight = undefined;
-		dbg("[tts] stopped (audio cut, fetch aborted)");
+		this.inflight.clear();
+		dbg("[tts] stopped (audio cut, fetches aborted)");
 	}
 
 	// Teardown for when the synthesizer is discarded for good (not part of the
@@ -280,10 +291,15 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		this.stop();
 	}
 
-	// Speak each sentence chunk in turn: POST it to /audio/speech, pace the returned
-	// PCM into the shared worklet, and move to the next. Fetch of sentence N+1 overlaps
-	// playback of sentence N (the pace clock spans the whole utterance), so playback is
-	// gapless. Resolves once every chunk has been fetched (audio may still be draining).
+	// Speak the reply sentence by sentence. The first sentence is STREAMED (its PCM paced
+	// into the worklet as bytes arrive) for the lowest time-to-first-audio; the remaining
+	// sentences are PREFETCHED into buffers by a bounded concurrent pipeline and enqueued
+	// in order. That keeps sentence N+1's fetch running ahead of sentence N's 1x playout,
+	// so the pace queue never drains to empty between sentences and playback is gapless
+	// (the pace clock spans the whole utterance). Fetches run concurrently, but each
+	// sentence's PCM is enqueued strictly in order so the shared cumulative pace clock
+	// stays monotonic. Resolves once every sentence has been fetched (audio may still be
+	// draining).
 	private async run(chunks: AsyncIterable<string>): Promise<void> {
 		// A new utterance supersedes any in-flight one: bump the epoch so a prior run's
 		// late fetch is stale (its frames are dropped by the gen guard), and capture our
@@ -295,13 +311,52 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 
 		let attempted = false;
 		try {
-			for await (const chunk of chunks) {
-				// A newer utterance (or stop()) bumped the epoch — abandon this stale loop.
+			const it = chunks[Symbol.asyncIterator]();
+
+			// Pull the first non-empty sentence and stream it, for the lowest
+			// time-to-first-audio. (Streaming only the first sentence keeps a single
+			// writer on the cumulative pace clock while the rest are prefetched.)
+			let firstText: string | null = null;
+			for (;;) {
+				const { value, done } = await it.next();
+				if (done) break;
+				const t = (value as string).trim();
+				if (t) {
+					firstText = t;
+					break;
+				}
+			}
+			if (firstText === null) return; // nothing speakable
+			attempted = true;
+
+			// A bounded pipeline of in-flight buffered fetches for the remaining
+			// sentences, kept PREFETCH_SENTENCES deep so downloads run ahead of playout.
+			const pipeline: Array<Promise<Uint8Array | null>> = [];
+			let exhausted = false;
+			const pump = async (): Promise<void> => {
+				while (!exhausted && pipeline.length < PREFETCH_SENTENCES) {
+					if (this.aborted || myGen !== this.gen) return;
+					const { value, done } = await it.next();
+					if (done) {
+						exhausted = true;
+						return;
+					}
+					const t = (value as string).trim();
+					if (!t) continue;
+					pipeline.push(this.fetchSentence(t, myGen, false));
+				}
+			};
+
+			// Stream sentence 1 while the pipeline prefetches sentences 2..N concurrently.
+			await Promise.all([this.fetchSentence(firstText, myGen, true), pump()]);
+
+			// Drain the prefetched sentences in order: await each buffered PCM, refill the
+			// pipeline so the following fetch is already running, then enqueue (paced).
+			while (pipeline.length) {
 				if (this.aborted || myGen !== this.gen) break;
-				const text = chunk.trim();
-				if (!text) continue;
-				attempted = true;
-				await this.fetchSentence(text, myGen);
+				const pcm = await pipeline.shift()!;
+				await pump();
+				if (pcm && pcm.length) this.enqueuePcmBytes(pcm);
 			}
 		} catch (err) {
 			dbgError(`[tts] speak loop error: ${String(err)}`);
@@ -327,16 +382,21 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 		}
 	}
 
-	// POST one sentence to /audio/speech and pace the returned raw PCM into the worklet.
-	// A transient failure only loses THIS sentence (logged, skipped) rather than
-	// abandoning the rest of the reply. The gen check after the await drops audio from a
-	// superseded run.
-	private async fetchSentence(text: string, myGen: number): Promise<void> {
+	// POST one sentence to /audio/speech and consume the returned raw PCM. In `stream`
+	// mode the PCM is paced into the worklet the moment bytes arrive (lowest
+	// time-to-first-audio — used for the first sentence) and the return is null. In
+	// buffered mode the whole clip is accumulated and returned as one Uint8Array, so a
+	// prefetched sentence can be enqueued in strict order later without a second writer
+	// racing the shared cumulative pace clock. A transient failure only loses THIS
+	// sentence (logged, skipped) rather than abandoning the rest of the reply; the gen
+	// check after each read drops audio from a superseded run.
+	private async fetchSentence(text: string, myGen: number, stream: boolean): Promise<Uint8Array | null> {
 		const base = this.config.baseUrl ?? DEFAULT_TTS_BASE;
 		const voice = this.config.voice ?? DEFAULT_VOICE;
 		const controller = new AbortController();
-		this.inflight = controller;
+		this.inflight.add(controller);
 		const timer = setTimeout(() => controller.abort(), SPEECH_FETCH_TIMEOUT_MS);
+		const buffered: Uint8Array[] = [];
 		try {
 			const res = await fetch(base, {
 				method: "POST",
@@ -346,12 +406,10 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 			});
 			if (!res.ok || !res.body) {
 				dbgWarn(`[tts] /audio/speech ${res.status}; skipping sentence`);
-				return;
+				return null;
 			}
-			// Read the PCM as it streams in and pace frames the moment bytes arrive, so
-			// the first audio plays at the endpoint's time-to-first-byte instead of after
-			// the whole clip downloads (the latency win). A 16-bit LE sample can straddle
-			// two network chunks, so carry a leftover odd byte between reads.
+			// Read the PCM as it streams in. A 16-bit LE sample can straddle two network
+			// chunks, so carry a leftover odd byte between reads.
 			const reader = res.body.getReader();
 			let carry: Uint8Array | null = null;
 			let total = 0;
@@ -361,7 +419,7 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 				// Superseded (barge-in / newer utterance): stop reading, drop the rest.
 				if (this.aborted || myGen !== this.gen) {
 					await reader.cancel().catch(() => {});
-					return;
+					return null;
 				}
 				if (!value || !value.length) continue;
 				let bytes: Uint8Array = value;
@@ -375,17 +433,32 @@ export class CloudTtsSynthesizer implements SpeechSynthesizer {
 				const usable = bytes.length - (bytes.length % 2);
 				if (usable < bytes.length) carry = bytes.slice(usable);
 				if (usable > 0) {
-					this.enqueuePcmBytes(bytes.subarray(0, usable));
+					if (stream) {
+						this.enqueuePcmBytes(bytes.subarray(0, usable));
+					} else {
+						// Copy: subarray is a view over the reader's chunk buffer, which may
+						// be reused on the next read; the buffered path retains it.
+						buffered.push(bytes.slice(0, usable));
+					}
 					total += usable;
 				}
 			}
-			dbg(`[tts] spoke "${text.slice(0, 40)}" (${total} bytes streamed)`);
+			dbg(`[tts] ${stream ? "streamed" : "fetched"} "${text.slice(0, 40)}" (${total} bytes)`);
+			if (stream || total === 0) return null;
+			const out = new Uint8Array(total);
+			let off = 0;
+			for (const b of buffered) {
+				out.set(b, off);
+				off += b.length;
+			}
+			return out;
 		} catch (err) {
 			// AbortError on barge-in is expected; anything else is a transient loss.
 			if (!this.aborted) dbgWarn(`[tts] sentence fetch failed: ${String(err)}`);
+			return null;
 		} finally {
 			clearTimeout(timer);
-			if (this.inflight === controller) this.inflight = undefined;
+			this.inflight.delete(controller);
 		}
 	}
 
