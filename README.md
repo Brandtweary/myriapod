@@ -52,8 +52,8 @@ When you finish a turn, your speech goes to an open
 [Whisper](https://github.com/SYSTRAN/faster-whisper) model and comes back as text. The language model
 reads it, along with whatever the memory surfaced for you, and streams a reply that an open-weights
 [Orpheus](https://github.com/canopyai/Orpheus-TTS) voice speaks aloud as it arrives, so you hear the first
-words before the last are written. The reference deployment runs
-[Kimi K3](https://openrouter.ai/moonshotai/kimi-k3); swapping it is a one-line change.
+words before the last are written. The reference deployment speaks in Orpheus's `leo` and runs
+[Kimi K3](https://openrouter.ai/moonshotai/kimi-k3); swapping either is a one-line change.
 
 ### The memory
 
