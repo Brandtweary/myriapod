@@ -51,7 +51,7 @@ own hardware; the hosted demo just runs them for you.
 When you finish a turn, your speech goes to an open
 [Whisper](https://github.com/SYSTRAN/faster-whisper) model and comes back as text. The language model
 reads it, along with whatever the memory surfaced for you, and streams a reply that an open-weights
-[Kokoro](https://github.com/hexgrad/kokoro) voice speaks aloud as it arrives, so you hear the first
+[Orpheus](https://github.com/canopyai/Orpheus-TTS) voice speaks aloud as it arrives, so you hear the first
 words before the last are written. The reference deployment runs
 [Kimi K3](https://openrouter.ai/moonshotai/kimi-k3); swapping it is a one-line change.
 
@@ -87,7 +87,7 @@ the model endpoints are all self-hostable:
 
 - **STT** — an open [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server over HTTP;
   point the frontend at it with `VITE_STT_BASE`.
-- **TTS** — an open-weights [Kokoro](https://github.com/hexgrad/kokoro) model streamed over a WebSocket;
+- **TTS** — an open-weights [Orpheus](https://github.com/canopyai/Orpheus-TTS) model streamed over a WebSocket;
   `VITE_TTS_BASE`.
 - **LLM** — any OpenAI-compatible chat endpoint hosting an open-weight model, either through your own
   instance of the backend (`VITE_PROXY_BASE`) or straight to a provider with your own key in Settings.

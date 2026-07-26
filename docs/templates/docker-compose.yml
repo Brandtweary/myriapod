@@ -2,8 +2,8 @@
 #
 # Every service here is OPTIONAL; run only the ones whose feature you want:
 #   whisper  (GPU)  — speech-to-text.  Skip it for text-only.
-#   kokoro   (CPU)  — text-to-speech backend. Skip it for text-only. Needs a
-#                     small websocket bridge in front (see the TTS section).
+#   moshi    (GPU)  — text-to-speech.  Skip it for text-only. Commented below:
+#                     it is BUILT FROM SOURCE, not a pullable image.
 #   embed    (CPU)  — memory-dedup embeddings. Skip it; dedup degrades to
 #                     string similarity (fail-soft).
 #   searxng  (CPU)  — web_search backend. Skip it to drop web search.
@@ -36,27 +36,31 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # --- Text-to-speech (CPU) -------------------------------------------------
-  # The frontend speaks the moshi/unmute streaming protocol: a msgpack websocket
-  # at /api/tts_streaming that answers {type:"Ready"} and streams
-  # {type:"Audio", pcm:[float32 @ 24 kHz]} frames back for {type:"Text"} +
-  # {type:"Eos"} input (VITE_TTS_BASE points the browser at it). Two ways to
-  # serve that protocol:
+  # --- Text-to-speech (GPU) — BUILD FROM SOURCE, no pullable image ----------
+  # moshi-server is not published as a container. Build it from Kyutai's repos:
+  #   https://github.com/kyutai-labs/unmute   (vendors moshi-server)
+  #   https://github.com/kyutai-labs/moshi
+  # Follow the unmute build, then run:
+  #   worker --config configs/tts.toml
+  # It exposes the streaming WebSocket  /api/tts_streaming  on port 8080 and
+  # needs a GPU plus a HuggingFace token to fetch weights. The tts.toml
+  # authorized_ids MUST include whatever you set as VITE_TTS_AUTH in the
+  # frontend (the browser passes it as the auth_id query param).
   #
-  #   1. Kokoro (the reference deployment): run Kokoro-FastAPI below — an
-  #      open-weights 82M voice, faster than realtime on CPU, OpenAI-style
-  #      POST /v1/audio/speech, 24 kHz s16 mono WAV out — and put a small
-  #      websocket bridge in front that does the protocol translation
-  #      (per-sentence: accept Text frames, POST the sentence to
-  #      /v1/audio/speech, stream the WAV back as 1920-sample Audio frames,
-  #      then close).
-  #   2. A real moshi-server (GPU) built from https://github.com/kyutai-labs/moshi
-  #      serves the protocol natively; its authorized_ids must include your
-  #      VITE_TTS_AUTH (the browser passes it as the auth_id query param).
-  kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
-    ports:
-      - "8880:8880"   # OpenAI-compatible /v1/audio/speech
+  # moshi:
+  #   image: <build-this-yourself-from-kyutai/unmute>
+  #   command: ["worker", "--config", "configs/tts.toml"]
+  #   environment:
+  #     HUGGING_FACE_HUB_TOKEN: <hf-token>
+  #   ports:
+  #     - "8080:8080"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
 
   # --- Embeddings (CPU) -----------------------------------------------------
   # HF text-embeddings-inference, 384-dim MiniLM. Serves POST /embed on port 80.

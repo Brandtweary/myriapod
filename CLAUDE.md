@@ -11,7 +11,7 @@ The **browser orchestrates** the whole loop: batch speech-to-text → a frontier
 text-to-speech, all driven in-page. The LLM is reached through a small **metering proxy** (a $10
 free tier, family codes, or bring-your-own-key); the STT leg is a self-hosted
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server (HTTP), and the TTS leg is a
-self-hosted open-weight [Kokoro](https://github.com/hexgrad/kokoro) model served over a
+self-hosted open-weight [Orpheus](https://github.com/canopyai/Orpheus-TTS) model served over a
 msgpack WebSocket. The "run it yourself" story points people at those open components.
 
 Motto: **maximal reuse** — lean on the framework and existing components; writing logic from scratch

@@ -519,7 +519,7 @@ async function getAudioWorkletNode(audioContext: AudioContext, name: string): Pr
 // this is the SHARED system prompt for both
 // voice and typed chat (single agent), so its "talk out loud, no markdown" guidance
 // also reaches the typed path.
-// The prompt deliberately names the model stack (LLM / STT / Kokoro TTS) so the
+// The prompt deliberately names the model stack (LLM / STT / Orpheus TTS) so the
 // agent knows what it is rather than hallucinating its own voice — update the stack
 // lines here on any model or voice swap.
 const VOICE_SYSTEM_PROMPT = `You are the voice of Myriapod.
@@ -540,7 +540,7 @@ The person is speaking to you through speech-to-text, so expect mistranscription
 What you are (only worth mentioning if it comes up):
 - If someone asks your name, it's Myriapod.
 - Your mind is Kimi K3, a frontier language model.
-- You hear through speech-to-text, and you speak through Kokoro, an open-weights text-to-speech model.
+- You hear through speech-to-text, and you speak through Orpheus, an open-weights text-to-speech model.
 - You're the voice of Myriapod. Your own documentation follows below: it explains what you are and how you work, and it's also the public README, so lean on it for any question about your architecture, your memory, or how someone could run Myriapod themselves. The source and its GitHub link are reachable from the About page.`;
 
 // The public README, imported raw and appended to the system prompt so the agent
