@@ -62,7 +62,7 @@ organs, not correspondents.
 Prompt shape (`pipeline-prompts.ts`): one shared system stub, the full transcript **first**,
 role-specific instructions **last** (the transcript is an append-only shared prefix across agents and
 turns — the shape provider prompt-caching rewards). No numeric anchors on expected output counts (an
-anchor becomes the target; qualitative tests + a hard ceiling only). This generalizes past numbers: never pre-load an answer the agent should compute in the moment — ranges, soft biases ("prefer none", "lean toward X"), and "when in doubt" escape hatches all do the same thing. The model has no set point, so your guess doesn't *nudge* its judgment, it *replaces* it — swapping the agent's live read of the actual case for a guess you made blind to it. Write the decision procedure, not the answer; anchor only on a value verified exactly right (a real hard ceiling).
+anchor becomes the target; qualitative tests + a hard ceiling only). This generalizes past numbers: never pre-load an answer the agent should compute in the moment — ranges, soft biases ("prefer none", "lean toward X"), and "when in doubt" escape hatches all do the same thing. The model has no set point, so my guess doesn't *nudge* its judgment, it *replaces* it — swapping the agent's live read of the actual case for a guess I made blind to it. Write the decision procedure, not the answer; anchor only on a value verified exactly right (a real hard ceiling).
 
 **Everything reasons — Kimi K3 is always-on.** Kimi K3 has one reasoning mode and OpenRouter accepts
 only the wire effort `"max"`, so the chat agent AND all three pipeline agents think on every turn;
