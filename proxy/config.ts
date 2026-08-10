@@ -8,35 +8,26 @@ function num(name: string, fallback: number): number {
 	return Number.isFinite(n) ? n : fallback;
 }
 
-// The moshi voice instances the broker load-balances across. Prod sets VOICE_INSTANCES
-// to a JSON array of {sttUrl, ttsUrl} pairs (two instances, distinguished by URL path
-// on the same origin). When unset, a SINGLE instance is built from VOICE_STT_BASE /
-// VOICE_TTS_BASE (defaulting to the dev WS targets) so staging behaves exactly like the
-// current single-instance demo.
-function parseVoiceInstances(): { sttUrl: string; ttsUrl: string }[] {
-	const raw = process.env.VOICE_INSTANCES;
+// The streaming-TTS endpoints the broker load-balances voice sessions across. Set
+// VOICE_TTS_ENDPOINTS to a JSON array of {ttsUrl} to run several (distinguished by URL
+// path on the same origin). When unset, a SINGLE endpoint is built from
+// VOICE_TTS_BASE (defaulting to the dev WS target).
+function parseTtsEndpoints(): { ttsUrl: string }[] {
+	const raw = process.env.VOICE_TTS_ENDPOINTS;
 	if (raw && raw.trim()) {
 		try {
 			const arr = JSON.parse(raw) as unknown;
 			if (Array.isArray(arr)) {
 				const cleaned = arr
-					.filter(
-						(x): x is { sttUrl: string; ttsUrl: string } =>
-							!!x && typeof x.sttUrl === "string" && typeof x.ttsUrl === "string",
-					)
-					.map((x) => ({ sttUrl: x.sttUrl, ttsUrl: x.ttsUrl }));
+					.filter((x): x is { ttsUrl: string } => !!x && typeof x.ttsUrl === "string")
+					.map((x) => ({ ttsUrl: x.ttsUrl }));
 				if (cleaned.length) return cleaned;
 			}
 		} catch {
-			// malformed → fall back to the single-instance default below
+			// malformed → fall back to the single-endpoint default below
 		}
 	}
-	return [
-		{
-			sttUrl: process.env.VOICE_STT_BASE ?? "ws://localhost:8123/api/asr-streaming",
-			ttsUrl: process.env.VOICE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming",
-		},
-	];
+	return [{ ttsUrl: process.env.VOICE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming" }];
 }
 
 export const config = {
@@ -82,7 +73,7 @@ export const config = {
 	// Wiring.
 	openrouterBase: process.env.OPENROUTER_BASE ?? "https://openrouter.ai/api/v1",
 	// Self-hosted SearXNG backing the auth-gated /v1/web-search route. Defaults to
-	// the local NixOS instance (serves JSON); prod overrides to the GPU-host instance.
+	// a local instance (which must serve JSON); prod overrides to the GPU host.
 	searxngBase: process.env.SEARXNG_BASE ?? "http://127.0.0.1:8888",
 	// The embedding-inference container backing /v1/embed (memory dedup). Defaults
 	// to a local text-embeddings-inference instance; prod overrides to the GPU host.
@@ -104,14 +95,15 @@ export const config = {
 	port: num("PORT", 8790),
 
 	// --- Voice-session broker -------------------------------------------------
-	// The moshi instances to load-balance voice sessions across (see
-	// parseVoiceInstances). Per-instance capacity = the moshi STT batch_size; the
-	// current live config runs stt batch_size=1, so 1 is the default. Prod with two
-	// instances sets a higher batch_size and matches it here.
-	voiceInstances: parseVoiceInstances(),
-	voiceInstanceCapacity: num("VOICE_INSTANCE_CAPACITY", 1),
+	// The streaming-TTS endpoints to load-balance voice sessions across (see
+	// parseTtsEndpoints). Capacity is how many simultaneous voice sessions ONE such
+	// endpoint is declared to carry — an operator judgment the broker enforces, not a
+	// value any backend reports; 1 is the conservative default for a single-GPU TTS
+	// server. STT is a shared stateless HTTP endpoint and is not leased.
+	voiceTtsEndpoints: parseTtsEndpoints(),
+	voiceTtsSessionCapacity: num("VOICE_TTS_SESSION_CAPACITY", 1),
 	voiceHeartbeatSec: num("VOICE_HEARTBEAT_SEC", 60),
 	// Absolute lease lifetime (seconds). A lease is reclaimed once it exceeds this age
-	// REGARDLESS of heartbeats, so a client can't hold an STT slot forever by beating.
+	// REGARDLESS of heartbeats, so a client can't hold a TTS slot forever by beating.
 	voiceMaxLeaseSec: num("VOICE_MAX_LEASE_SEC", 1800),
 };

@@ -90,7 +90,7 @@ class AudioOutputProcessor extends AudioWorkletProcessor {
         // small; ours starts at a 30s ceiling, so Math.min(80ms, 30s) collapsed
         // the ceiling to 80ms on the very first overflow and then dropped almost
         // every subsequent frame. We keep the 30s ceiling firm. The real fix for
-        // moshi's faster-than-realtime burst is the client-side pacing in tts.ts,
+        // the TTS server's faster-than-realtime burst is the client-side pacing in tts.ts,
         // which keeps the buffer far below this threshold so this branch should
         // not fire at all.
       }

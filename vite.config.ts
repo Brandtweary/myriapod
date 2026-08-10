@@ -42,7 +42,7 @@ function debugLogPlugin(): Plugin {
 // to the four egress targets of the browser-orchestrated stack:
 //   - the metering proxy (chat + ingestion on the owner-funded paths), VITE_PROXY_BASE
 //   - OpenRouter directly (the own-key path), https://openrouter.ai
-//   - the moshi STT + TTS WebSockets (the voice cascade's back half), VITE_STT_BASE /
+//   - the self-hosted STT + TTS endpoints (the voice cascade's back half), VITE_STT_BASE /
 //     VITE_TTS_BASE (ws:// in dev via the tunnel, wss:// on the public host in prod)
 function cspPlugin(): Plugin {
 	const originOf = (u: string) => new URL(u).origin;

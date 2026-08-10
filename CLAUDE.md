@@ -91,7 +91,8 @@ external services:
 - **STT (batch)** — a self-hosted Whisper HTTP endpoint. The whole utterance's PCM is resampled
   24 kHz → 16 kHz, encoded as a 16-bit mono WAV, and POSTed as `multipart/form-data`; the server
   returns `{"text":...}` JSON. Stateless. `src/stt.ts`. Configured via `VITE_STT_BASE`.
-- **TTS (streaming)** — a moshi-server WebSocket (`/api/tts_streaming`). Sentence chunks stream up as
+- **TTS (streaming)** — a Kyutai-protocol msgpack WebSocket (`/api/tts_streaming`), served by a
+  self-hosted Orpheus TTS model behind a protocol bridge. Sentence chunks stream up as
   the LLM generates; raw 24 kHz PCM frames (`PcmMessagePack`) stream back and are paced to ~1x realtime
   before posting to the audio-output-processor worklet — no Opus decoder. `src/tts.ts`. Configured
   via `VITE_TTS_BASE`.
@@ -113,7 +114,7 @@ OpenRouter owner key server-side, mints/recovers anon and family principals, met
 cost against them, enforces caps, and hosts the open (rate-limited) `/v1/web-search` and `/v1/embed`
 passthroughs. It's a cheap always-on spine, deliberately separate from the GPU-hosted STT/TTS/embed
 (so the site survives the GPU lease lapsing — TTS/STT sit behind swappable seams; dedup degrades to
-string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
+string-only). Run it with `bun run server.ts`; it binds `HOST`/`PORT`, defaulting to `0.0.0.0:8790`.
 
 - **Frontend** — a TypeScript app over the `pi-web-ui` UI layer, whose source is **vendored** in
   `src/pi-web-ui/` (Lit 3 + mini-lit + Tailwind v4, Vite, static SPA). Retrieval, the term memory, and
@@ -150,8 +151,8 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     auto-replace, and `flag_for_review`. Every tool records a one-line action (that stream *is* the
     action buffer and the activity feed).
   - **stt.ts** — batch speech-to-text (`PcmRecorder` + stateless `WhisperClient`).
-  - **tts.ts** — streaming text-to-speech (`SentenceChunker` + `KyutaiTtsSynthesizer` over a moshi
-    msgpack WS; ~1x-realtime pacing so the worklet buffer doesn't overflow).
+  - **tts.ts** — streaming text-to-speech (`SentenceChunker` + `KyutaiTtsSynthesizer` over a
+    Kyutai-protocol msgpack WS; ~1x-realtime pacing so the worklet buffer doesn't overflow).
   - **stt-lexicon.ts** — the speech-adaptation half of the lexicon: the mistranscription log + the
     auto-replace rules (`applyAutoReplace`, applied client-side to voice transcripts before display),
     and `mistranscriptionCount` (the recurrence signal for the persistent-miss → alias escalation).
@@ -168,10 +169,10 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
     click toggles a persistent TTS mute.
   - **consent-modal.ts** — the standalone one-time memory opt-in (own-key/family path + Settings
     re-prompt; the anon path folds it into grant-modal).
-  - **settings.ts** — `MemoryTab` (consent toggle + a read-only readout of the audit agent's
-    human-review flags), `OpenRouterKeyTab` (the **Access** tab: own key +
-    family-code redemption + hosted-balance readout), and `ExportTab` (lexicon download/import — the
-    real durability story since IndexedDB can be evicted).
+  - **settings.ts** — `MemoryTab` (consent toggle, a read-only readout of the audit agent's
+    human-review flags, and lexicon export/import — the real durability story since IndexedDB can
+    be evicted) and `OpenRouterKeyTab` (the **Access** tab: own key + family-code redemption +
+    hosted-balance readout).
   - **custom-messages.ts** — custom message types + renderers + `customConvertToLlm`. Maps the hidden
     `memory-context` breadcrumb and the `compactionSummary` to user messages; renders the
     `voice-pending` placeholder (model-invisible; removed before the real transcript lands).
@@ -227,9 +228,11 @@ string-only). Run it with `bun run server.ts` on `127.0.0.1:8790`.
   meter; mint sub-keys), `anon.ts` (the grant gates), `voice-broker.ts` (the voice-session broker),
   `config.ts`, `mint-code.ts`, `anon.test.ts` + `voice-broker.test.ts`. Real keys + caps live in
   `proxy/.env` (gitignored); `.env.example` documents the shape.
-  - **voice-broker.ts** — load-balances browser voice sessions across the moshi instance(s) with
-    overflow queuing. In-memory ephemeral leases; capacity per instance = the moshi TTS `batch_size`
-    (STT is a shared Whisper endpoint, so the leased per-instance `sttUrl` is vestigial). Routes:
+  - **voice-broker.ts** — load-balances browser voice sessions across the streaming-TTS endpoint(s)
+    with overflow queuing. In-memory ephemeral leases; the leased resource is a TTS endpoint, and
+    `VOICE_TTS_SESSION_CAPACITY` is an operator-declared number enforced only here — no backend
+    reports a limit, so over-setting it queues sessions on the TTS server rather than refusing them.
+    STT is a shared stateless HTTP endpoint and is not leased. Routes:
     `POST /voice/lease` (else `202 {queued}`), `/voice/heartbeat`, `/voice/release`. TTL sweeper
     reclaims dead leases. Gated on `VITE_VOICE_BROKER` (default off = single-instance demo).
 - **scripts/** — dev-time tooling (TS, never shipped): **test-graph-mutation.ts** (term-store API) and
@@ -301,9 +304,9 @@ vendored components, and are load-bearing, not cruft:
   bubbles, compaction rewrite). (The shipped example also listens for a phantom `state-update` event;
   we bind the raw lifecycle events instead.)
 - **Mount-once ChatPanel** — mount it once outside the reactive render root and never re-render it.
-- **Artifacts overwritten with real tools** — `ChatPanel` hardwires an `artifacts` tool regardless of
-  `toolsFactory`. We reassign `agent.state.tools` after `setAgent` to our own set (`memory_search` +
-  `memory_dump` + `web_search`), dropping artifacts. One reassignment covers newSession AND loadSession.
+- **Tools assigned after `setAgent`** — `toolsFactory` is passed empty and `agent.state.tools` is
+  overwritten with our own set (`memory_search` + `memory_dump` + `web_search`). One reassignment
+  covers newSession AND loadSession.
 - **Listener async-safety** — core awaits each listener; a throw or heavy work stalls the run. The
   whole listener body is try/caught and only re-renders on meaningful events.
 - **Link-href scrubbing** — mini-lit's `MarkdownBlock` renders assistant markdown via `unsafeHTML`
@@ -320,7 +323,7 @@ vendored components, and are load-bearing, not cruft:
   after any `src/kg/` change. Proxy: `cd proxy && bun run server.ts` (serve) / `bun test` (its suite).
 - **Endpoints are env-configured.** `VITE_PROXY_BASE` and `VITE_STT_BASE` / `VITE_TTS_BASE` default to
   local/dev targets and are overridden at build time for deploy. Optional voice overrides (for
-  self-hosters pointing at their own moshi/Whisper): `VITE_TTS_VOICE` / `VITE_TTS_AUTH` /
+  self-hosters pointing at their own TTS/Whisper): `VITE_TTS_VOICE` / `VITE_TTS_AUTH` /
   `VITE_TTS_CFG_ALPHA` / `VITE_STT_AUTH`, all with sane fallbacks. On the proxy, `SEARXNG_BASE` and
   `EMBED_BASE` point at the self-hosted backends. The own-key path always goes to OpenRouter direct.
 - **Versions are pinned** — the runtime `@earendil-works/*` suite (pi-agent-core, pi-ai, pi-tui) is

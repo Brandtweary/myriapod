@@ -6,16 +6,13 @@
 import { test, expect } from "bun:test";
 import { VoiceBroker } from "./voice-broker";
 
-const ONE = [{ sttUrl: "ws://x/asr", ttsUrl: "ws://x/tts" }];
-const TWO = [
-	{ sttUrl: "ws://x/asr", ttsUrl: "ws://x/tts" },
-	{ sttUrl: "ws://x/asr-2", ttsUrl: "ws://x/tts-2" },
-];
+const ONE = [{ ttsUrl: "ws://x/tts" }];
+const TWO = [{ ttsUrl: "ws://x/tts" }, { ttsUrl: "ws://x/tts-2" }];
 
-function brokerWithClock(instances: { sttUrl: string; ttsUrl: string }[], capacity: number) {
+function brokerWithClock(endpoints: { ttsUrl: string }[], capacity: number) {
 	let t = 0;
 	const b = new VoiceBroker({
-		instances,
+		endpoints,
 		capacity,
 		heartbeatSec: 60,
 		now: () => t,
@@ -23,13 +20,12 @@ function brokerWithClock(instances: { sttUrl: string; ttsUrl: string }[], capaci
 	return { b, advance: (ms: number) => (t += ms), at: (ms: number) => (t = ms) };
 }
 
-test("lease grants and returns the instance URLs + heartbeat interval", () => {
+test("lease grants and returns the endpoint URL + heartbeat interval", () => {
 	const { b } = brokerWithClock(ONE, 1);
 	const r = b.lease();
 	expect(r.granted).toBe(true);
 	if (r.granted) {
 		expect(r.leaseId).toBeTruthy();
-		expect(r.sttUrl).toBe("ws://x/asr");
 		expect(r.ttsUrl).toBe("ws://x/tts");
 		expect(r.heartbeatSec).toBe(60);
 	}
@@ -92,7 +88,7 @@ test("heartbeat on an unknown lease returns false", () => {
 
 test("a lease is reclaimed past the absolute max-age even while heartbeating", () => {
 	let t = 0;
-	const b = new VoiceBroker({ instances: ONE, capacity: 1, heartbeatSec: 60, maxLeaseSec: 300, now: () => t });
+	const b = new VoiceBroker({ endpoints: ONE, capacity: 1, heartbeatSec: 60, maxLeaseSec: 300, now: () => t });
 	const first = b.lease();
 	expect(first.granted).toBe(true);
 	// Beat every 100s to stay inside the 3x-heartbeat (180s) TTL...
@@ -108,21 +104,21 @@ test("a lease is reclaimed past the absolute max-age even while heartbeating", (
 	expect(after.granted).toBe(true);
 });
 
-test("two instances load-balance: the second lease lands on the empty instance", () => {
+test("two endpoints load-balance: the second lease lands on the empty endpoint", () => {
 	const { b } = brokerWithClock(TWO, 1);
 	const a = b.lease();
 	const c = b.lease();
 	expect(a.granted).toBe(true);
 	expect(c.granted).toBe(true);
 	if (a.granted && c.granted) {
-		// least-loaded pick → distinct instances, distinct URLs
-		expect(a.sttUrl).not.toBe(c.sttUrl);
+		// least-loaded pick → distinct endpoints, distinct URLs
+		expect(a.ttsUrl).not.toBe(c.ttsUrl);
 	}
 	// both full now → 202
 	expect(b.lease().granted).toBe(false);
 });
 
-test("capacity > 1 admits that many leases per instance before queuing", () => {
+test("capacity > 1 admits that many leases per endpoint before queuing", () => {
 	const { b } = brokerWithClock(ONE, 3);
 	expect(b.lease().granted).toBe(true);
 	expect(b.lease().granted).toBe(true);

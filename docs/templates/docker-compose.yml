@@ -2,7 +2,7 @@
 #
 # Every service here is OPTIONAL; run only the ones whose feature you want:
 #   whisper  (GPU)  — speech-to-text.  Skip it for text-only.
-#   moshi    (GPU)  — text-to-speech.  Skip it for text-only. Commented below:
+#   orpheus  (GPU)  — text-to-speech.  Skip it for text-only. Commented below:
 #                     it is BUILT FROM SOURCE, not a pullable image.
 #   embed    (CPU)  — memory-dedup embeddings. Skip it; dedup degrades to
 #                     string similarity (fail-soft).
@@ -37,30 +37,48 @@ services:
               capabilities: [gpu]
 
   # --- Text-to-speech (GPU) — BUILD FROM SOURCE, no pullable image ----------
-  # moshi-server is not published as a container. Build it from Kyutai's repos:
-  #   https://github.com/kyutai-labs/unmute   (vendors moshi-server)
-  #   https://github.com/kyutai-labs/moshi
-  # Follow the unmute build, then run:
-  #   worker --config configs/tts.toml
-  # It exposes the streaming WebSocket  /api/tts_streaming  on port 8080 and
-  # needs a GPU plus a HuggingFace token to fetch weights. The tts.toml
-  # authorized_ids MUST include whatever you set as VITE_TTS_AUTH in the
-  # frontend (the browser passes it as the auth_id query param).
+  # The browser speaks the Kyutai streaming msgpack WebSocket protocol on
+  # /api/tts_streaming. Any server speaking it works; the reference stack is
+  # three pieces, none of them published as a ready image:
+  #   orpheus-llama  — Orpheus-3B GGUF on a CUDA llama.cpp server, raw completions.
+  #                    https://github.com/canopyai/Orpheus-TTS  (weights)
+  #                    https://github.com/ggml-org/llama.cpp    (server image)
+  #   orpheus-tts    — Orpheus-FastAPI: prompts the above, decodes SNAC tokens to
+  #                    24 kHz mono WAV, serves OpenAI POST /v1/audio/speech.
+  #                    https://github.com/Lex-au/Orpheus-FastAPI  (build locally)
+  #                    Run the SNAC decode on the GPU; CPU decode is too slow for
+  #                    realtime playback.
+  #   orpheus-bridge (CPU) — a small adapter you supply: accepts the Kyutai WebSocket,
+  #                    accumulates the incoming Text word-frames, chunks them on
+  #                    sentence boundaries, POSTs each chunk to /v1/audio/speech,
+  #                    and streams the WAV back as Audio (float32 PCM) + per-word
+  #                    Text frames, closing the socket to signal end-of-stream.
+  #                    Sentence chunking is what bounds time-to-first-audio.
   #
-  # moshi:
-  #   image: <build-this-yourself-from-kyutai/unmute>
-  #   command: ["worker", "--config", "configs/tts.toml"]
+  # orpheus-llama:
+  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  #   command: ["-m", "/models/<orpheus-gguf>", "--host", "0.0.0.0", "--port", "5006",
+  #             "-ngl", "999", "--ctx-size", "8192", "--n-predict", "8192",
+  #             "--rope-scaling", "linear"]
+  #   volumes:
+  #     - <host-model-dir>:/models:ro
+  #   deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }] } } }
+  #
+  # orpheus-tts:
+  #   image: <build-this-yourself-from-Lex-au/Orpheus-FastAPI>
   #   environment:
-  #     HUGGING_FACE_HUB_TOKEN: <hf-token>
+  #     ORPHEUS_API_URL: http://orpheus-llama:5006/v1/completions
+  #     ORPHEUS_SAMPLE_RATE: "24000"
+  #     ORPHEUS_DEFAULT_VOICE: <voice-name>
+  #   deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }] } } }
+  #
+  # orpheus-bridge:
+  #   image: <build-this-yourself>
+  #   environment:
+  #     ORPHEUS_URL: http://orpheus-tts:5005/v1/audio/speech
+  #     DEFAULT_VOICE: <voice-name>
   #   ports:
-  #     - "8080:8080"
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
+  #     - "8080:8080"   # the WebSocket Caddy proxies /api/tts_streaming to
 
   # --- Embeddings (CPU) -----------------------------------------------------
   # HF text-embeddings-inference, 384-dim MiniLM. Serves POST /embed on port 80.

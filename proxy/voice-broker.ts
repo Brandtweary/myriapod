@@ -1,33 +1,36 @@
 // Voice-session broker — load-balances browser voice sessions across one or more
-// moshi instances, with overflow queuing.
+// streaming-TTS endpoints, with overflow queuing.
 //
 // WHY HERE: the metering proxy is the only always-on backend, so the broker rides
 // along instead of standing up a second service. The leases are IN-MEMORY and
 // EPHEMERAL — they track concurrency, not money, so a proxy restart simply resets
 // the counts (every browser re-leases on its next mic-on). Nothing is persisted.
 //
-// CAPACITY MODEL: the binding resource is the moshi STT slot. moshi serves a fixed
-// `batch_size` of concurrent STT streams per instance; that number is the
-// per-instance capacity. A voice-engaged browser holds ONE lease (one STT slot) for
-// the duration of its engagement, kept alive by a periodic heartbeat. TTS is
-// short-lived (one session per sentence) and, as long as the TTS batch_size is >=
-// the STT batch_size, never independently overflows — so a single STT-slot lease is
-// the whole admission control.
+// CAPACITY MODEL: the leased resource is a TTS endpoint. A voice-engaged browser
+// holds ONE lease on one endpoint for the duration of its engagement, kept alive by
+// a periodic heartbeat, and that lease is the whole admission control. STT is a
+// shared, stateless HTTP endpoint holding no per-session resource, so it is neither
+// leased nor counted.
 //
-// The two moshi instances in prod differ only by URL PATH on the same origin (so the
-// frontend CSP's connect-src is untouched); the broker just hands back whichever
-// instance's {sttUrl, ttsUrl} pair it assigned.
+// `capacity` is OPERATOR-DECLARED and enforced HERE and nowhere else: it is how many
+// simultaneous voice sessions the operator judges one TTS endpoint can carry. No
+// upstream service reports or negotiates a limit, so the number cannot be derived
+// from a backend setting — set it too high and sessions queue behind each other on
+// the TTS server (slower speech), never a refusal.
+//
+// Multiple endpoints in one deploy differ only by URL PATH on the same origin (so
+// the frontend CSP's connect-src is untouched); the broker hands back the `ttsUrl`
+// it assigned.
 
 import { randomBytes } from "node:crypto";
 
-export interface VoiceInstance {
-	sttUrl: string;
+export interface TtsEndpoint {
 	ttsUrl: string;
 }
 
 export interface VoiceBrokerConfig {
-	instances: VoiceInstance[];
-	// Per-instance max concurrent leases — set to the moshi STT batch_size.
+	endpoints: TtsEndpoint[];
+	// Max concurrent voice sessions per TTS endpoint (see CAPACITY MODEL above).
 	capacity: number;
 	// How often the browser should heartbeat (seconds). A lease is TTL-reclaimed
 	// once its last beat is older than 3x this (covers tabs that closed without a
@@ -41,18 +44,18 @@ export interface VoiceBrokerConfig {
 }
 
 interface Lease {
-	instanceIdx: number;
+	endpointIdx: number;
 	lastBeat: number;
 	createdAt: number;
 }
 
 export type LeaseResult =
-	| { granted: true; leaseId: string; sttUrl: string; ttsUrl: string; heartbeatSec: number }
+	| { granted: true; leaseId: string; ttsUrl: string; heartbeatSec: number }
 	| { granted: false; queued: true; position: number };
 
 export class VoiceBroker {
 	private readonly leases = new Map<string, Lease>();
-	// Per-instance active lease count, indexed like config.instances.
+	// Per-endpoint active lease count, indexed like cfg.endpoints.
 	private readonly active: number[];
 	// Timestamps of recent overflow (202) responses, swept on the heartbeat TTL.
 	// Used only to give a queued caller an approximate "position" — the broker keeps
@@ -61,9 +64,9 @@ export class VoiceBroker {
 	private readonly now: () => number;
 
 	constructor(private readonly cfg: VoiceBrokerConfig) {
-		if (cfg.instances.length === 0) throw new Error("VoiceBroker needs at least one instance");
+		if (cfg.endpoints.length === 0) throw new Error("VoiceBroker needs at least one TTS endpoint");
 		if (cfg.capacity < 1) throw new Error("VoiceBroker capacity must be >= 1");
-		this.active = cfg.instances.map(() => 0);
+		this.active = cfg.endpoints.map(() => 0);
 		this.now = cfg.now ?? Date.now;
 	}
 
@@ -86,19 +89,19 @@ export class VoiceBroker {
 			const expired = l.lastBeat < leaseCutoff || (ageCap > 0 && t - l.createdAt >= ageCap);
 			if (expired) {
 				this.leases.delete(id);
-				this.active[l.instanceIdx]!--;
+				this.active[l.endpointIdx]!--;
 			}
 		}
 		const queueCutoff = t - this.cfg.heartbeatSec * 1000;
 		this.queuedAt = this.queuedAt.filter((ts) => ts >= queueCutoff);
 	}
 
-	/** Pick the least-loaded instance with a free slot and assign a lease, or queue
-	 *  (202) when every instance is full. */
+	/** Pick the least-loaded endpoint with a free slot and assign a lease, or queue
+	 *  (202) when every endpoint is full. */
 	lease(): LeaseResult {
 		this.sweep();
 		let best = -1;
-		for (let i = 0; i < this.cfg.instances.length; i++) {
+		for (let i = 0; i < this.cfg.endpoints.length; i++) {
 			if (this.active[i]! >= this.cfg.capacity) continue;
 			if (best === -1 || this.active[i]! < this.active[best]!) best = i;
 		}
@@ -109,12 +112,11 @@ export class VoiceBroker {
 		const leaseId = randomBytes(16).toString("hex");
 		this.active[best]!++;
 		const t = this.now();
-		this.leases.set(leaseId, { instanceIdx: best, lastBeat: t, createdAt: t });
-		const inst = this.cfg.instances[best]!;
+		this.leases.set(leaseId, { endpointIdx: best, lastBeat: t, createdAt: t });
+		const inst = this.cfg.endpoints[best]!;
 		return {
 			granted: true,
 			leaseId,
-			sttUrl: inst.sttUrl,
 			ttsUrl: inst.ttsUrl,
 			heartbeatSec: this.cfg.heartbeatSec,
 		};
@@ -136,14 +138,14 @@ export class VoiceBroker {
 		const l = this.leases.get(leaseId);
 		if (!l) return;
 		this.leases.delete(leaseId);
-		this.active[l.instanceIdx]!--;
+		this.active[l.endpointIdx]!--;
 	}
 
 	/** Snapshot for diagnostics/tests. */
-	stats(): { capacity: number; instances: { active: number }[]; totalLeases: number } {
+	stats(): { capacity: number; endpoints: { active: number }[]; totalLeases: number } {
 		return {
 			capacity: this.cfg.capacity,
-			instances: this.active.map((a) => ({ active: a })),
+			endpoints: this.active.map((a) => ({ active: a })),
 			totalLeases: this.leases.size,
 		};
 	}
@@ -152,7 +154,7 @@ export class VoiceBroker {
 // --- HTTP wiring -------------------------------------------------------------
 // Registered on the shared Hono app by server.ts. Routes are NOT principal-gated (a
 // lease is concurrency state, not spend, and CORS scopes who can reach the proxy) but
-// /voice/lease IS per-IP rate-limited so a script can't drain every STT slot by
+// /voice/lease IS per-IP rate-limited so a script can't drain every TTS slot by
 // hammering the mint. The IP comes from server.ts's trust-aware resolver.
 
 import type { Hono } from "hono";
@@ -210,7 +212,6 @@ export function registerVoiceRoutes(
 		if (r.granted) {
 			return c.json({
 				leaseId: r.leaseId,
-				sttUrl: r.sttUrl,
 				ttsUrl: r.ttsUrl,
 				heartbeatSec: r.heartbeatSec,
 			});

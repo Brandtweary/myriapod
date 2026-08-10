@@ -44,9 +44,10 @@ your-domain.example {
 		reverse_proxy 127.0.0.1:8000
 	}
 
-	# --- Text-to-speech (moshi, WebSocket) -----------------------------------
-	# moshi serves /api/tts_streaming natively — no rewrite. Caddy upgrades the
-	# WebSocket automatically. Upstream = your moshi container (8080).
+	# --- Text-to-speech (WebSocket) ------------------------------------------
+	# The TTS server serves /api/tts_streaming natively — no rewrite. Caddy
+	# upgrades the WebSocket automatically. Upstream = the protocol bridge in
+	# front of your TTS model (8080 in the compose template).
 	handle /api/tts_streaming {
 		reverse_proxy 127.0.0.1:8080
 	}

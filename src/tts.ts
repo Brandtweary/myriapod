@@ -2,27 +2,26 @@
 // cascade. Unlike the old server-side Unmute cascade (one WebSocket carrying
 // STT→LLM→TTS), this module is a *standalone* TTS leg: the Pi agent drives the
 // LLM itself and its streamed text is piped through here to be spoken. It talks
-// directly to a Kyutai moshi-server `/api/tts_streaming` endpoint (msgpack over a
-// WebSocket), requesting raw 24 kHz PCM frames (PcmMessagePack) that are paced to ~1x
-// realtime and posted into the shared audio-output-processor worklet — no Opus decode,
-// no Ogg state.
+// directly to a TTS server's `/api/tts_streaming` endpoint over the Kyutai streaming
+// protocol (msgpack over a WebSocket), requesting raw 24 kHz PCM frames
+// (PcmMessagePack) that are paced to ~1x realtime and posted into the shared
+// audio-output-processor worklet — no Opus decode, no Ogg state.
 //
-// moshi treats one WS session as ONE continuous generation and garbles if you feed
-// it several sentences, so each sentence gets its own session. PCM output is what
+// The protocol treats one WS session as ONE continuous utterance and garbles if you
+// feed it several sentences, so each sentence gets its own session. PCM output is what
 // makes that safe: an Opus decoder holds per-stream demux state and corrupts when fed
 // back-to-back independent Ogg streams, whereas PCM frames are stateless and simply
-// queue in the worklet's FIFO in arrival order. moshi bursts that PCM faster than
-// realtime, so frames are paced to ~1x before the worklet (see scheduleFrame) — the job
-// Unmute's backend used to do; without it the worklet buffer overflows and garbles long
-// replies.
+// queue in the worklet's FIFO in arrival order. The server bursts that PCM faster than
+// realtime, so frames are paced to ~1x before the worklet (see scheduleFrame) — without
+// it the worklet buffer overflows and garbles long replies.
 //
 // Three parts:
 //   1. SentenceChunker — buffers LLM text tokens, flushes sentence-sized chunks.
-//   2. KyutaiTtsSynthesizer — the moshi TTS WebSocket client + PCM playback.
+//   2. KyutaiTtsSynthesizer — the TTS WebSocket client + PCM playback.
 //   3. SpeechSynthesizer — the swappable interface (cloud-TTS fallbacks later
 //      implement the same shape for graceful degradation).
 //
-// The orchestrator owns the AudioContext (created at 24 kHz to match moshi's PCM so
+// The orchestrator owns the AudioContext (created at 24 kHz to match the wire PCM so
 // no resampling is needed) and the audio-output-processor worklet, passing the worklet
 // in so playback is shared with the rest of the app.
 
@@ -53,8 +52,8 @@ const TRAILING_CLOSERS = /[.!?)\]}"'»”’]/;
 //   2. A newline (a hard break even without terminal punctuation).
 //   3. The long-buffer fallback (FLUSH_MAX_CHARS) so an unterminated run speaks.
 //
-// Punctuation is DELIBERATELY preserved — moshi enunciates it, and the server
-// has already stripped markdown (* _ `). We only trim surrounding whitespace.
+// Punctuation is DELIBERATELY preserved — the TTS server enunciates it, and markdown
+// (* _ `) is already stripped upstream. We only trim surrounding whitespace.
 export class SentenceChunker {
 	private buf = "";
 
@@ -144,7 +143,7 @@ export async function* chunkStream(tokens: AsyncIterable<string>): AsyncIterable
 // PART 3 (interface) — the swappable synthesizer seam
 // =============================================================================
 
-// The degradation seam: the Tier-1 self-hosted moshi backend implements this,
+// The degradation seam: the Tier-1 self-hosted TTS backend implements this,
 // and later cloud-TTS fallbacks implement the same shape, so the orchestrator
 // can swap synthesizers without caring which is live.
 export interface SpeechSynthesizer {
@@ -159,66 +158,64 @@ export interface SpeechSynthesizer {
 export interface TtsConfig {
 	// Override the WS endpoint (else VITE_TTS_BASE / the localhost default).
 	baseUrl?: string;
-	// moshi voice id (a path_on_server). Defaults to the Václav "developer-1" voice.
+	// Voice identifier, sent as the `voice` query param (see DEFAULT_VOICE).
 	voice?: string;
 	// Classifier-free-guidance strength.
 	cfgAlpha?: number;
-	// moshi `public_token` (see the auth caveat below).
+	// Auth token for the TTS endpoint (see the auth note below).
 	apiKey?: string;
 	// Fired (at most once per synth) when a whole run() produced zero Audio frames —
-	// i.e. the text rendered but nothing spoke (moshi unreachable/failing all turn).
+	// i.e. the text rendered but nothing spoke (TTS unreachable/failing all turn).
 	// The orchestrator wires this to a user-facing notice; unset = silent (default).
 	onVoiceUnavailable?: () => void;
 }
 
 // =============================================================================
-// PART 2 — Kyutai moshi TTS WebSocket client
+// PART 2 — Kyutai-protocol TTS WebSocket client
 // =============================================================================
 
 const ENV = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
 
-// Dev default points at a local moshi-server. Deploy overrides via VITE_TTS_BASE
+// Dev default points at a local TTS server. Deploy overrides via VITE_TTS_BASE
 // (a wss:// URL on the public host).
 const DEFAULT_TTS_BASE = ENV.VITE_TTS_BASE ?? "ws://localhost:8123/api/tts_streaming";
-// The moshi voice id (a path_on_server). Override with VITE_TTS_VOICE to select a
-// voice your own moshi-server has; the default is the stock "developer-1" male voice.
+// The voice identifier sent as the `voice` query param. The default is a Kyutai-style
+// path_on_server id; a server that doesn't recognize it falls through to its own default
+// voice. Override with VITE_TTS_VOICE to name a voice your TTS server actually has.
 const DEFAULT_VOICE = ENV.VITE_TTS_VOICE ?? "unmute-prod-website/developer-1.mp3";
 // Classifier-free-guidance strength. Override with VITE_TTS_CFG_ALPHA.
 const DEFAULT_CFG_ALPHA = ENV.VITE_TTS_CFG_ALPHA ? Number(ENV.VITE_TTS_CFG_ALPHA) : 1.5;
 
-// AUTH: moshi reads the token from the `auth_id` query param when no kyutai-api-key
-// header is present; a browser WS can't set headers, so auth_id is the path. Verified
-// against moshi-server main.rs (`PyStreamingQuery { auth_id, format, voice }` backs the
-// /api/tts_streaming Py module). Override with VITE_TTS_AUTH to match your moshi's
-// authorized_ids; the default is the conventional demo token.
+// AUTH: the token rides the `auth_id` query param — a browser WS can't set headers, so
+// a query param is the only path. A self-hosted TTS endpoint may or may not check it;
+// override with VITE_TTS_AUTH if yours does. The default is the conventional demo token.
 const DEFAULT_API_KEY = ENV.VITE_TTS_AUTH ?? "public_token";
 
-// moshi streams PCM at 24 kHz (PcmMessagePack). The shared AudioContext is created at
-// this rate (see main.ts) so frames play without any resampling.
+// The wire format is PCM at 24 kHz (PcmMessagePack). The shared AudioContext is created
+// at this rate (see main.ts) so frames play without any resampling.
 export const TTS_SAMPLE_RATE = 24000;
 
-// moshi generates ~3-4x faster than realtime and dumps a whole reply's PCM in a
-// burst. The playback worklet's FIFO is sized for ~1x realtime input (the rate
-// Unmute's server-side RealtimeQueue used to enforce before we ripped Unmute out);
-// fed the raw burst, it overflows its 30s cap on a long reply and collapses to an
-// 80ms cap, shredding most of the audio. So we re-add the pacing here: hold each
-// frame and release it to the worklet at its playout position minus a small
-// lookahead, keeping the worklet at ~1x and its buffer near-empty.
+// The TTS server generates several times faster than realtime and dumps a whole reply's
+// PCM in a burst. The playback worklet's FIFO is sized for ~1x realtime input; fed the
+// raw burst, it overflows its 30s cap on a long reply and collapses to an 80ms cap,
+// shredding most of the audio. So the pacing lives here: hold each frame and release it
+// to the worklet at its playout position minus a small lookahead, keeping the worklet at
+// ~1x and its buffer near-empty.
 const PLAYBACK_LOOKAHEAD_MS = 300;
 const DRAIN_INTERVAL_MS = 15;
 
-// moshi has a startup race — the WS opens before the model is loaded and a
-// {type:"Ready"} message is sent. We wait for Ready before sending any text,
-// polling up to MAX_READY_CHECKS × READY_CHECK_MS before giving up (a ready
-// socket sends anyway; a socket that never opened is skipped). Kept tight so a
-// missed/renamed Ready costs a few seconds of dead air, not ~10s per sentence.
+// The server signals it can accept text with a {type:"Ready"} message, which may trail
+// the socket opening. We wait for Ready before sending any text, polling up to
+// MAX_READY_CHECKS × READY_CHECK_MS before giving up (a ready socket sends anyway; a
+// socket that never opened is skipped). Kept tight so a missed/renamed Ready costs a
+// few seconds of dead air, not ~10s per sentence.
 const MAX_READY_CHECKS = 3;
 const READY_CHECK_MS = 1000;
 
 // Ceiling on how long endSession() waits for a session's `done` (ws close/error).
-// A moshi that streams PCM but never closes would otherwise wedge run() forever;
+// A server that streams PCM but never closes would otherwise wedge run() forever;
 // on timeout we close the socket so the sentence loop advances. Sized a few
-// seconds beyond expected per-sentence generation time (moshi runs >realtime).
+// seconds beyond expected per-sentence generation time (generation runs >realtime).
 const SESSION_DONE_TIMEOUT_MS = 8000;
 
 
@@ -249,7 +246,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 	// this is the load-bearing guard against overlapping sessions.
 	private gen = 0;
 
-	// Realtime pacing state (see PLAYBACK_LOOKAHEAD_MS). moshi's frames are queued
+	// Realtime pacing state (see PLAYBACK_LOOKAHEAD_MS). Inbound frames are queued
 	// here with a scheduled release time instead of posting to the worklet on
 	// arrival; a timer drains the queue to the worklet at ~1x realtime. The play
 	// clock spans the whole utterance (across the per-sentence sessions), so it is
@@ -259,7 +256,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 	private paceClockStart = 0;
 	private paceTimer: ReturnType<typeof setInterval> | undefined;
 
-	// The orchestrator passes its audio-output-processor worklet; moshi's PCM frames
+	// The orchestrator passes its audio-output-processor worklet; the inbound PCM frames
 	// are paced into it (see scheduleFrame). No decoder to own anymore.
 	constructor(
 		private outputWorklet: AudioWorkletNode,
@@ -324,11 +321,11 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 		this.sawAudio = false;
 		this.resetPacing();
 
-		// moshi concatenates every Text message in a session into ONE generation, and
-		// garbles after just a few concatenated sentences — we can't stop it concatenating,
-		// so we never give it more than one sentence: each chunk gets its own session
-		// (connect → Text → Eos → close). Single sentences synthesize cleanly (the only thing
-		// that ever worked). moshi generates faster than realtime, so the paced frame queue
+		// The server contract concatenates every Text message in a session into ONE
+		// utterance, and garbles after just a few concatenated sentences — the concatenation
+		// can't be turned off, so we never give it more than one sentence: each chunk gets its
+		// own session (connect → Text → Eos → close). Single sentences synthesize cleanly.
+		// Generation runs faster than realtime, so the paced frame queue
 		// (scheduleFrame) stays ahead of playback and a sentence keeps playing while the next
 		// session spins up — no audible gap. Generation is serialized per sentence; playback
 		// stays continuous.
@@ -363,7 +360,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 		}
 
 		// If we sent at least one sentence but not a single Audio frame ever came back,
-		// the text rendered silently (moshi unreachable/failing all turn) — surface a
+		// the text rendered silently (TTS unreachable/failing all turn) — surface a
 		// one-shot signal so the failure isn't invisible. Suppressed on abort/supersede.
 		if (
 			attempted &&
@@ -415,7 +412,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 			session.ws.send(encode({ type: "Eos" }));
 			dbg("[tts] -> Eos");
 		}
-		// `done` only settles on ws close/error. A moshi that emits PCM then never closes
+		// `done` only settles on ws close/error. A server that emits PCM then never closes
 		// would hang here forever and wedge the rest of the turn — so race it against a
 		// timeout, and on the timeout branch close the socket so the loop advances.
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -503,7 +500,7 @@ export class KyutaiTtsSynthesizer implements SpeechSynthesizer {
 			case "Audio": {
 				// Raw 24 kHz PCM frame (PcmMessagePack). No Opus decoder, no Ogg-stream
 				// state — so the per-sentence sessions can't corrupt a shared decoder.
-				// The frame is NOT posted to the worklet on arrival: moshi bursts faster
+				// The frame is NOT posted to the worklet on arrival: the server bursts faster
 				// than realtime, so we queue it for paced release (see scheduleFrame).
 				const pcm = (msg as { pcm?: number[] }).pcm;
 				if (!pcm || !pcm.length) return;

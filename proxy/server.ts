@@ -28,11 +28,11 @@ import type { Context } from "hono";
 const db = new Db(config.dbPath);
 const app = new Hono();
 
-// Voice-session broker — in-memory leases over the configured moshi instance(s).
+// Voice-session broker — in-memory leases over the configured TTS endpoint(s).
 // Ephemeral concurrency state, not money; a restart just resets the counts.
 const voiceBroker = new VoiceBroker({
-	instances: config.voiceInstances,
-	capacity: config.voiceInstanceCapacity,
+	endpoints: config.voiceTtsEndpoints,
+	capacity: config.voiceTtsSessionCapacity,
 	heartbeatSec: config.voiceHeartbeatSec,
 	maxLeaseSec: config.voiceMaxLeaseSec,
 });

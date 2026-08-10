@@ -157,10 +157,10 @@ const WEB_SEARCH_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/web-search`;
 const EMBED_ENDPOINT = `${MYRIAPOD_PROXY_ORIGIN}/v1/embed`;
 
 // Voice-concurrency broker (OFF by default). When VITE_VOICE_BROKER is unset the
-// voice path is byte-for-byte the current single-instance demo: no lease calls, and
-// SttClient/KyutaiTtsSynthesizer are built with no URL override (they fall back to
-// VITE_STT_BASE / VITE_TTS_BASE). Enabled, the broker hands each voice-engaged
-// browser a leased {sttUrl, ttsUrl} pair and queues overflow. The /voice/* routes
+// voice path makes no lease calls, and SttClient/KyutaiTtsSynthesizer are built with
+// no URL override (they fall back to VITE_STT_BASE / VITE_TTS_BASE). Enabled, the
+// broker hands each voice-engaged browser a leased TTS endpoint URL and queues
+// overflow; STT is shared and never leased. The /voice/* routes
 // live at the proxy ORIGIN (same as web-search), so the build-time CSP is untouched.
 const VOICE_BROKER_ENABLED =
 	import.meta.env.VITE_VOICE_BROKER === "1" || import.meta.env.VITE_VOICE_BROKER === "true";
@@ -451,7 +451,7 @@ let voiceQueue: AsyncStringQueue | null = null;
 // a browser's voice engagement — acquired on the first mic-on, kept alive by a
 // heartbeat across turns, released on unload. null = no slot held (the default-off
 // path leaves this null forever, so the voice clients build with no URL override).
-let voiceLease: { leaseId: string; sttUrl: string; ttsUrl: string } | null = null;
+let voiceLease: { leaseId: string; ttsUrl: string } | null = null;
 let voiceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 // Persistent "speak-but-don't-listen" mute (double-click the stop-audio button),
 // remembered per browser. When set, the speaker is never opened on message_start.
@@ -1615,8 +1615,8 @@ async function initApp() {
 	let startCancelled = false;
 
 	// Lazily build the shared TTS synth: an AudioContext + the audio-output-processor
-	// worklet, reused for every voice turn. The context runs at moshi's 24 kHz PCM rate
-	// so frames play with no resampling (the Opus decoder that used to resample is gone).
+	// worklet, reused for every voice turn. The context runs at the TTS wire's 24 kHz PCM
+	// rate so frames play with no resampling — there is no decoder in the path.
 	const ensureSynth = async (): Promise<KyutaiTtsSynthesizer> => {
 		if (synth) return synth;
 		const ctx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE });
@@ -1638,9 +1638,9 @@ async function initApp() {
 	// Lazily build + connect the shared STT client. connect() is a no-op when already
 	// connected and reconnects when the socket has dropped, so it's safe to call per turn.
 	const ensureStt = async (): Promise<WhisperClient> => {
-		// Whisper is a SHARED HTTP endpoint, not a per-instance leased socket — so the
-		// broker's per-instance sttUrl is ignored here. The client always falls back to
-		// VITE_STT_BASE (connect() is a no-op; HTTP is stateless).
+		// Whisper is a SHARED, stateless HTTP endpoint holding no per-session resource,
+		// so the broker never leases one — only the TTS endpoint is leased. This client
+		// always uses VITE_STT_BASE (connect() is a no-op; HTTP is stateless).
 		if (!sttClient) sttClient = new WhisperClient();
 		await sttClient.connect();
 		return sttClient;
@@ -1737,9 +1737,9 @@ async function initApp() {
 
 	// Acquire (or reuse) a voice slot. Returns:
 	//   "skip"    — broker disabled OR the request failed → proceed with default
-	//               single-instance behavior (the demo still works if the broker is down).
-	//   "granted" — a slot is held (voiceLease set); voice clients will use its URLs.
-	//   "busy"    — every instance is full (202) → caller must abort the mic-on.
+	//               unbrokered behavior (voice still works if the broker is down).
+	//   "granted" — a slot is held (voiceLease set); the synth will use its TTS URL.
+	//   "busy"    — every TTS endpoint is full (202) → caller must abort the mic-on.
 	const acquireVoiceLease = async (): Promise<"skip" | "granted" | "busy"> => {
 		if (!VOICE_BROKER_ENABLED) return "skip";
 		if (voiceLease) return "granted"; // already hold this engagement's slot
@@ -1759,22 +1759,20 @@ async function initApp() {
 			dbgError("voice lease error status:", res.status);
 			return "skip";
 		}
-		let data: { leaseId?: string; sttUrl?: string; ttsUrl?: string; heartbeatSec?: number };
+		let data: { leaseId?: string; ttsUrl?: string; heartbeatSec?: number };
 		try {
 			data = await res.json();
 		} catch (err) {
 			dbgError("voice lease parse failed:", err);
 			return "skip";
 		}
-		if (!data.leaseId || !data.sttUrl || !data.ttsUrl) return "skip";
-		// A freshly-minted lease may point at a different instance than the previous
-		// one (e.g. after a TTL-drop). Tear down any cached voice clients so ensure*
-		// rebuilds them against the leased URLs.
+		if (!data.leaseId || !data.ttsUrl) return "skip";
+		// A freshly-minted lease may point at a different TTS endpoint than the previous
+		// one (e.g. after a TTL-drop). Tear down the cached synth so ensureSynth rebuilds
+		// it against the leased URL.
 		synth?.dispose();
 		synth = null;
-		sttClient?.close();
-		sttClient = null;
-		voiceLease = { leaseId: data.leaseId, sttUrl: data.sttUrl, ttsUrl: data.ttsUrl };
+		voiceLease = { leaseId: data.leaseId, ttsUrl: data.ttsUrl };
 		startVoiceHeartbeat(data.heartbeatSec ?? 60);
 		return "granted";
 	};
@@ -1792,7 +1790,7 @@ async function initApp() {
 			// only fires the standalone consent modal for own-key/family users.
 			void ensureMemoryConsent();
 			// Voice-concurrency admission (no-op when the broker is disabled). On "busy"
-			// every moshi instance is full → refuse the mic-on and steer the user to typed
+			// every TTS endpoint is full → refuse the mic-on and steer the user to typed
 			// chat (which shares the same agent and needs no voice slot).
 			const leaseStatus = await acquireVoiceLease();
 			if (startCancelled) return; // toggled off during the lease await
