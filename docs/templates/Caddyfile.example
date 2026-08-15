@@ -11,8 +11,11 @@
 your-domain.example {
 	# --- The metering proxy (API only) ---------------------------------------
 	# The proxy serves no static files — only these API routes. It listens on
-	# 127.0.0.1:8790. Caddy forwards X-Forwarded-For automatically, so set the
-	# proxy's TRUSTED_PROXY=127.0.0.1 to read the real visitor IP from it.
+	# 127.0.0.1:8790. Caddy sets X-Forwarded-For to the real visitor and ignores any
+	# value the client sent, since it trusts no upstream proxy by default — leave it
+	# that way unless a CDN sits in front. Set the proxy's TRUSTED_PROXY=127.0.0.1 so
+	# it reads the visitor IP from that header instead of seeing every request as
+	# coming from Caddy.
 	handle /v1/* {
 		reverse_proxy 127.0.0.1:8790
 	}

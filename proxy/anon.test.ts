@@ -87,6 +87,24 @@ test("cleared browser on an already-granted IP → adopts the same principal", a
 	expect(db.newIpGrantsToday()).toBe(grants); // no extra mint
 });
 
+// Regression guard on clientIp(): a trusted reverse proxy APPENDS the real peer to
+// any inbound X-Forwarded-For, so the rightmost entry is the only trustworthy one.
+// Reading the leftmost would let a client pick its own identity per request and mint
+// an unbounded number of fresh grants.
+test("spoofed leftmost X-Forwarded-For entry is ignored; the rightmost wins", async () => {
+	const first = await anonInit("203.0.113.9");
+	const { token } = (await first.json()) as { token: string };
+	const grants = db.newIpGrantsToday();
+
+	// What the proxy sees when a client sends "X-Forwarded-For: 9.9.9.9" and the
+	// reverse proxy appends the real peer.
+	const spoofed = await anonInit("9.9.9.9, 203.0.113.9");
+	expect(spoofed.status).toBe(200);
+	const data = (await spoofed.json()) as { token: string };
+	expect(data.token).toBe(token); // same principal → identity came from the rightmost entry
+	expect(db.newIpGrantsToday()).toBe(grants); // no extra mint
+});
+
 test("5 new-IP grants/day cap → a later distinct IP gets 429", async () => {
 	let saw429 = false;
 	for (let i = 0; i < 10; i++) {

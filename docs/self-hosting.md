@@ -104,6 +104,11 @@ what your server can handle queues work on the server instead of refusing the se
 > co-located Caddy) so the proxy reads the real client IP from `X-Forwarded-For`. **Never set it to
 > `*` if the proxy is directly internet-exposed** — that lets anyone spoof `X-Forwarded-For` and
 > defeat every per-IP protection.
+>
+> Once trusted, the proxy reads the **rightmost** `X-Forwarded-For` entry — the one the reverse
+> proxy itself appended — because anything to its left is client-supplied and spoofable. That
+> assumes exactly **one** trusted hop. Put a CDN in front and the rightmost entry becomes the CDN's
+> edge address, collapsing the per-IP guards again.
 
 > **Gotcha — `ALLOWED_ORIGIN`.** This is the CORS allow-list. It **must** be your public site origin
 > (e.g. `https://your-domain.example`) or the browser cannot reach the proxy at all. Comma-separate if
