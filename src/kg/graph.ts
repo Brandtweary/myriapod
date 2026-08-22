@@ -5,15 +5,12 @@
 
 import { depluralize, stemText, stemWord, tokenize } from "./stem";
 import { DESCRIPTION_WORD_CAP } from "./config";
+import { boundaryAssertions, escapeRegExp } from "../regex-utils";
 import type { GraphAsset, TermMatch, Thought } from "./types";
 
 interface TermEntry {
 	node_id: string;
 	no_stem: boolean;
-}
-
-function escapeRegExp(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function nowIso(): string {
@@ -399,7 +396,8 @@ export class Graph {
 		// matches an S-pluralized phrase ("term stores") in the input.
 		const singularText = tokenize(lowercased).map((t) => depluralize(t)).join(" ");
 		for (const [preparedKey, data] of this.termMulti) {
-			const pattern = new RegExp(`\\b${escapeRegExp(preparedKey)}\\b`);
+			const [lead, trail] = boundaryAssertions(preparedKey);
+			const pattern = new RegExp(`${lead}${escapeRegExp(preparedKey)}${trail}`);
 			if (data.no_stem) {
 				if (pattern.test(lowercased) || pattern.test(rejoinedText) || pattern.test(singularText)) {
 					matchedIds.add(data.node_id);

@@ -3,6 +3,7 @@
 // Run from myriapod/:  node_modules/.bin/tsx scripts/test-graph-mutation.ts
 
 import { DescriptionTooLongError, Graph } from "../src/kg/graph.ts";
+import { boundaryAssertions, escapeRegExp } from "../src/regex-utils.ts";
 
 let failures = 0;
 function check(name: string, cond: boolean): void {
@@ -122,6 +123,39 @@ const termCount = (g: Graph) => g.thoughts.size;
 	g.getOrCreate("honeybee", "The common honeybee.");
 	check("add hyphenated alias ok", g.addAlias("honeybee", "apis-mellifera"));
 	check("hyphenated alias typed with hyphen retrieves", g.termMatch("found an apis-mellifera specimen").some((m) => m.label === "honeybee"));
+
+	// Multi-word alias with a punctuation-bounded (sentence-final) edge — the
+	// STT-garble class this alias mechanism exists for. termMatch happens to
+	// also index a punctuation-stripped auto-variant of a multi-word alias
+	// (the tokenizer's punct-to-space normalization), which shadows the raw
+	// key here and matches regardless of whether its own boundary logic is
+	// correct — so this exercises the live retrieval path but does not by
+	// itself discriminate the boundary fix; the regex-utils tests below do.
+	g.getOrCreate("orchestration", "Container orchestration platform.");
+	check("add punctuation-edged alias ok", g.addAlias("orchestration", "k8s cluster."));
+	check(
+		"punctuation-edged multi-word alias matches at sentence end",
+		g.termMatch("we stood up a k8s cluster. it works well").some((m) => m.label === "orchestration"),
+	);
+}
+
+// -- regex-utils: edge-aware boundary assertions -----------------------------
+// The primitive termMatch's multi-word path is built on. Isolated here since
+// termMatch's own auto punct-stripped alias variant (above) can shadow a
+// broken boundary and mask the defect at that layer.
+{
+	const matches = (key: string, text: string): boolean => {
+		const [lead, trail] = boundaryAssertions(key);
+		return new RegExp(`${lead}${escapeRegExp(key)}${trail}`, "i").test(text);
+	};
+	check(
+		"punctuation-trailing key matches at sentence end",
+		matches("claude.", "please open claude. thanks"),
+	);
+	check(
+		"word-edged key still refuses a mid-word hit",
+		!matches("cat", "concatenate"),
+	);
 }
 
 console.log(failures === 0 ? "\nAll term-store tests passed." : `\n${failures} test(s) FAILED.`);

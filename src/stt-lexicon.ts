@@ -5,6 +5,8 @@
 // harness's config.toml replacements, which is exactly why the audit agent's
 // rules for creating them are conservative.
 
+import { boundaryAssertions, escapeRegExp } from "./regex-utils";
+
 export interface MistranscriptionEntry {
 	spoken: string; // what the user actually said
 	transcribed: string; // what Whisper wrote
@@ -38,18 +40,18 @@ export function mistranscriptionCount(lex: SttLexicon, spoken: string, transcrib
 	).length;
 }
 
-function escapeRegExp(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Apply every auto-replace rule to a fresh transcript (case-insensitive,
  *  whole-phrase word-boundary match). Voice turns only — typed input is the
- *  user's own keystrokes and is never rewritten. */
+ *  user's own keystrokes and is never rewritten. Boundaries are edge-aware
+ *  (`boundaryAssertions`) rather than a bare `\b`, which inverts into the
+ *  wrong test when `r.from` begins or ends on punctuation — plausible for a
+ *  logged STT garble. */
 export function applyAutoReplace(text: string, rules: AutoReplaceRule[]): string {
 	let out = text;
 	for (const r of rules) {
 		if (!r.from.trim()) continue;
-		const pattern = new RegExp(`\\b${escapeRegExp(r.from)}\\b`, "gi");
+		const [lead, trail] = boundaryAssertions(r.from);
+		const pattern = new RegExp(`${lead}${escapeRegExp(r.from)}${trail}`, "gi");
 		out = out.replace(pattern, r.to);
 	}
 	return out;

@@ -69,6 +69,15 @@ function check(name: string, cond: boolean): void {
 	check("auto-replace rewrites the phrase", applyAutoReplace("deploying kuber netties now", rules) === "deploying Kubernetes now");
 	check("auto-replace is case-insensitive", applyAutoReplace("Kuber Netties rocks", rules) === "Kubernetes rocks");
 	check("auto-replace leaves unrelated text", applyAutoReplace("no match here", rules) === "no match here");
+
+	// Punctuation-bounded (sentence-final) garble — a bare `\b` right after the
+	// literal "." inverts and never fires at end-of-sentence/whitespace, which is
+	// exactly where a real STT garble like this appears.
+	const punctRules = [{ from: "claude.", to: "CLAUDE.md", ts: "t" }];
+	check(
+		"auto-replace matches a punctuation-edged garble at sentence end",
+		applyAutoReplace("please open claude.", punctRules) === "please open CLAUDE.md",
+	);
 }
 
 console.log(failures === 0 ? "\nAll pipeline-machinery tests passed." : `\n${failures} test(s) FAILED.`);
